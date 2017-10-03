@@ -1,0 +1,19 @@
+szia,
+
+Utananeztem egy kicsit, hogyan lehetne elindulni a hazival
+
+Ez itt szerintem alapnak tokeletesen megfelel: http://websystique.com/spring-security/secure-spring-rest-api-using-basic-authentication/
+
+Ez egy egyszeru Spring MVC alkalmazas, REST CRUD muveletekkel, basic authentikacioval. Tomcatbe ki lehet deployolni es a leiras szerint Postmannel vagy a test Java klienssel lehet neki kuldozgetni a requesteket, remekul mukodik
+
+Ebbol kiindulva, a feladat nagyja lenyegeben az hogy bele kell rakni egy H2-t es azzal megirni a kivant serviceket; az adatbazis feltoltesehez pedig az app inditasakor remekul hasznalhato a Zoli altal bemutatott Liquibase, ld. https://docs.spring.io/spring-boot/docs/current/reference/html/howto-database-initialization.html. Az adatbazisos reszekhez persze mar erdemes atirni az appot Spring Bootra, de magukat a serviceket meg tudod irni elso korben Javaban tarolt adatokkal is. A tobbi requirement ehhez kepest minimalis, java helperek mar vannak a projektben, java8 featureoket lehet a servicekbe rakni (pl. for-if helyett forEach es stream filterezese predicate-tel), design pattern pedig lehet valami builder ami osszerakja az entityket
+
+Tehat a kovetkezo sorrendet javasolnam
+(1) servicek elkeszitese Javaban tarolt adatokkal
+(2) app atiras Spring Bootra, H2 es Liquibase bekonfiguralasa
+(3) servicek atirasa H2-re
+(4) egyeb requirementek (de ez mehet a tobbi ponttal parhuzamosan is)
+
+
+udv,
+B
