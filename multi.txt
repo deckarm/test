@@ -1,12 +1,47 @@
 Applying concurrency and multi-threading to common Java patterns (Jose Paumard)
 
+[understanding concurrency threading and synchronization]
+
 thread: OS szint. set of instructions. app: several threads. diff threads exec same time. JVM threads: GC, JIT etc
+
 same time: text typing + spellcheck + print + email receive. 1 core: time slicing, gyors ezert tunik ugy mintha parh lenne. tobb core: valodi parh
+
 CPU time sharing: scheduler. thread pausalasa 3 okbol 1) egyenlo elosztas 2) thread wait for data (IO) 3) thread wait for other thread
+
 race condition: 2 thread tries to R+W (!) same data same time => mas 1 ill tobb core eseten
+
 pl. singleton getInstance()-t ket thread probalja exec. T1 bejut ifbe, amikor a scheduler atadja T2-nek, T2 is bejut ifbe, megkrealja az instanceot, aztan megint T1 jon ami mar benn van az ifben, ezert o is megkreal egy masik instanceot es felulvagja T2 munkajat
+
 mo: sync. egy code blockot csak 1 thread execelhet. az objnak van egy lockja, ahhoz egy key (monitor), ezt kapja meg az execelo thread, es amig nala van addig masik thread nem kaphatja meg
+
 key: static getInstance() eseten maga a Singleton.class. non-static esetben az instance. ezek implicitek. explicit: metoduson belul sync(key), ahol key = new Object() fieldje a classnak
+
 Person class, sync getName(), sync getAge() metodusok. Mary instance eseten maga a Mary a key. T1 exec Mary.getName() => T2 nem executolhatja Mary.getAge()-t
+
 Mary + John ket kulon instance: T1 execeli Mary.getName()-t => T2 execelheti John.getAge()-jet vagy John.getName()-t is
+
 ha azt akarjuk h a Person class minden instanceban csak egy thread execelhesse a getName()-t, akkor a locknak a Person classhoz kell boundolnia (static field a classban) nem az egyes instanceokhoz. ekkor ha T1 execeli Mary.getName()-t, akkor T2 nem execelheti se John.getName()-t, se John.getAge()-t
+
+reentrant lock: Mary.m1() hivja John.m2()-t, aminek uaz a lockja. uaz a thread at tud lepni egyikbol a masikba, ez a reentrant
+
+deadlock: Mary.m1() hivja John.m2()-t de nem ugyanaz a lockjuk; ami hivja Mary.m3()-at aminek ugyanaz a lockja mint Mary.m1()-nek
+T1 execeli Mary.m1()-et, tehat egyuttal fogja Mary.m3()-at is, valamint T2 execeli John.m2()-t. Ez igy DL, mert T1 nem tud atlepni John.m2()-be, T2 pedig nem tud atlepni Mary.m3()-ba
+JVM tud DL-t detectalni, de restarton kivul mast nem nagyon lehet vele csinalni
+
+runnable pattern: new R() => pass to T constructor => T.start()
+R.run() {sout("I am running in" + Thread.currentThread().getName())}; T(R); T.setName("mythread"); T.start() => "mythread". de ha t.start() helyett t.run()-t irunk, akkor "main", mert nem uj threadben futtatja!
+
+pl. LongWrapper class, get(), increment() {i = i +1}
+main: R.run() {for(1000) LW.incr();}; T(R); T.start(); T.join(); sout(LW.get()); => 1000 OK, mert 1 threadunk van
+(join azert kell, h a join utan irt kod, azaz a sout a T lefutasa utan fusson le!)
+ha 1000 threadunk van, mindegyikre Ti(R), Ti.start(), Ti.join() => nem 1000000 lesz, es minden futtatasra mas
+az i = i+1 (R followed by W) tipikus race cond, ha diff threadek execelik same time
+mo: incr() metodus syncelese, a LW classba felvett new Object() keyjel
+
+pl. 3 metodus, 2 key
+a() K1 => b(); b() K2 => c(); c() K1 nem hiv senkit
+R1.run() {O.a()}; R2.run() {O.b()}; T1(R1); T2(R2); T1.start(); T2.start(); T1.join(); T2.join();
+T1 blocked, mert nem tud b()-be atlepni. T2 blocked mert nem tud c()-be atlepni
+debug modban latszodik (suspend thread): "waiting for object", "waited by", "owned by"
+
+thread (T instance) executes task (R instance) in spec context
