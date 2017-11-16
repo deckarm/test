@@ -86,3 +86,63 @@ ezekbol visszakerulhet RUNNABLE-be:
 BLOCKED: RUNNABLE-bol kerul at ide, ha sync blokk bejaratanal all aminek a keye nem hozzaferheto
 WAITING: RUNNABLE-bol wait() hatasara kerul at ide; wait listbe kerul; notify() ebresztheti
 TIMED_WAITING: RUNNABLE-bol wait(ms) vagy sleep(ms) hatasara kerul at ide. az ido lejartaval a system automatikusan notifyolja
+
+[ordering R/W operations on multicore]
+
+sync protect block of code => exec by only 1 thread at the same time => prevent race cond (pl. P/C)
+
+P/C count++, count--
+cache nelkul ez Ok lenne, de ma mar van cache :)
+- main mem: ~100 ns, 1 GB
+- CPU: tobb core, mindegyiknek sajat L1 (0.5 ns, 32 kb), L2 (7 ns, 256 kb); common L3
+
+pl. main memben count = 0;
+C1-ben levo prod ++-olja, az o L1-jeben count = 1 lesz
+C2-ben levo thread accessalna, neki mar count = 1-et kellene latnia es nem 0-t
+
+visibility lenyegeben: inform other caches that the var has been modified and should not be fetched from main mem
+var visible, ha a rajta vegrehajtott W-k visiblek. a sync W-ok azok visiblek!
+
+HB: abstract notion
+java mem model: multicore-on R/W same time tortenhetnek, a varok pedig tobb helyen tarolodhatnak. vis: R should return value set by last W
+
+1) T1 x:=1
+2) T2 r:=x
+r = ? ha nincs 1) es 2) kozott HB, akkor unknown (1 vagy 0). ha van HB akkor r = 1
+HB: minden sync vagy volatile W es a rakovetkezo sync vagy vol R kozott van
+
+W: incr() {i++}
+R: print() {sout(i)}
+W-t es R-t ket kulonnbozo thread futtatja
+- nincs sync, nincs vol: print unknown
+- ha a ket metodus sync (ugyanarra az objra/instancera!): a jo ertek printelodik
+- volatile i; (es nincs sync): a jo ertek printelodik
+
+m1() { x = 1; sync(lock) {y = 1}}
+m2() { sync(lock) { r1 = y }; r2 = x;}
+T1 futtatja m1-et, T2 m2-et; r2 = ?
+x = 1 HB y = 1 es r1 = y HB r2 = x mert uazon a metoduson belul vannak
+- ha T1 lep be eloszor: y = 1 HB r1 = y a sync miatt, es a fenti ket HB-vel egyutt latszik h r2 = 1 lesz
+- ha T2 lep be eloszor: r1 = y HB y = 1 a sync miatt, de r2 = x es x = 1 kozott nincs HB, nem tudjuk melyik lesz elobb, tehat nem tudjuk h r2 = 0 v 1 lesz
+
+sync: exclusive exec a block of code
+vis: var consistency guarantee (read the correctly updated value). gyengebb mint sync
+=> shared vart a threadeknek sync vagy vol modon kell accessalniuk
+
+false sharing: side effect, perf-- lehet
+cache data lineokbol all (8 long = 64 byte). ha volatile vart modositunk L1 cacheben, akkor a tobbi cacheben uazt a linet dirtyre markolja. dirty line olvasasa line refresht triggerel
+
+vol a,b 
+m1() {a++}
+m2() {b++}
+T1 core1-n futtatja m1-et, csak a erdekli, de core1.L1-ben uabba a lineba b is bekerul (mert egymas mellett vannak def?)
+T2 core2-n futtaja m2-t, csak b erdekli, de core2.L1-ben uabba a lineba a is bekerul
+eloszor T1 a++ => a line core2.L1-ben is dirtyre lesz markolva
+aztan T2 jonne, de a dirty miatt cache miss, es a main membol kell kiszednie b-t; pedig T1 nem nyult b-hez, a cache arch miatt tortent minden. ez a false sharing. invisible, hard to predict
+
+demo: 4 thread, 50m iter
+VolLongUnPadded { vol long = 0L; } => ha a class tobb instanceat krealjuk akkor valszeg uabba a cache lineba kerulnek, false sharing
+VolLongPadded {6db long; vol long = 0L; 6db long; } => ez igy isolated lesz egy cache lineban; tobb instance eseten nem uabba a cache lineba kerulnek
+n db T(createUnpaddedRunnable) => R-ben az unpadded long modifyolasa tortenik => same line, false sharing
+n db T(createPaddedRunnable) => R-ben a padded long modifyolasa tortenik => diff line, no false sharing
+1 db thread eseten az unpadded es a padded eset perf kb =, 2 db thread eseten mar latszi h az unpadded eset lassabb
