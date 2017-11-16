@@ -24,11 +24,11 @@ ha azt akarjuk h a Person class minden instanceban csak egy thread execelhesse a
 
 reentrant lock: Mary.m1() hivja John.m2()-t, aminek uaz a lockja. uaz a thread at tud lepni egyikbol a masikba, ez a reentrant
 
-deadlock: Mary.m1() hivja John.m2()-t de nem ugyanaz a lockjuk; ami hivja Mary.m3()-at aminek ugyanaz a lockja mint Mary.m1()-nek
+deadlock: Mary.m1() hivja John.m2()-t de nem ugyanaz a lockjuk; John.m2() hivja Mary.m3()-at aminek ugyanaz a lockja mint Mary.m1()-nek
 T1 execeli Mary.m1()-et, tehat egyuttal fogja Mary.m3()-at is, valamint T2 execeli John.m2()-t. Ez igy DL, mert T1 nem tud atlepni John.m2()-be, T2 pedig nem tud atlepni Mary.m3()-ba
 JVM tud DL-t detectalni, de restarton kivul mast nem nagyon lehet vele csinalni
 
-runnable pattern: new R() => pass to T constructor => T.start()
+runnable pattern: new R() (lambda!) => pass to T constructor => T.start()
 R.run() {sout("I am running in" + Thread.currentThread().getName())}; T(R); T.setName("mythread"); T.start() => "mythread". de ha t.start() helyett t.run()-t irunk, akkor "main", mert nem uj threadben futtatja!
 
 pl. LongWrapper class, get(), increment() {i = i +1}
@@ -45,3 +45,44 @@ T1 blocked, mert nem tud b()-be atlepni. T2 blocked mert nem tud c()-be atlepni
 debug modban latszodik (suspend thread): "waiting for object", "waited by", "owned by"
 
 thread (T instance) executes task (R instance) in spec context
+
+[implementing the producer/consumer pattern using wait/notify]
+
+thread executes a task(R)
+stop thread: interrupt(). nem allitja meg a threadet, hanem signalt kuld a thread altal futtatot tasknak h alljon le
+R.run() { while(!Thread.currentThread().isInterrupted())...}. T1(R); T1.start(); T1.interrupt() => ekkor fog a R-ben levo isInterrupted() true-t visszaadni es kiszallni a while-bol
+ha a thread blocked/waiting, akkor a corresponding metodus InterruptedExc-t fog dobni (pl. wait, notify, join)
+
+producer/consumer: bufferbe/bol, ami lehet ures/full is
+Pi/Ci mind sajat threadjeikben futnak => race cond lehet
+P: while(isFull) {NOP}; B[c++] = 1;
+C: while(isEmpty){NOP}; B[--c] = 0;
+ez igy race cond. minden P,C a sajat threadjeben fut es probalja W/R-ni a buffert => conc access miatt corrupt the array
+fix? sync magukat a p/c metodusokat? NOK, mert igy a P es a C instanceok lesznek a _kulon_ keyek
+kozos key kell: Object lock; es sync(lock) a p/c metodusokon belul
+ha B empty: a c-t futtato thread blokkolodik a whileban es fogja a keyt => p-t futtato thread var a sync(lock)-ra, de azt a c threadje fogja; ezert p nem tud adatot adni a B-hez => DL
+mo: parkoltatni kell a c threadjet ha producolasra var; es el kell engedni az altala tartott keyt h a p threadje hozzaferjen => wait/notify
+
+wait(): releaseli a thread altal tartott keyt. a thread WAIT statebe kerul, amibol notify() hatasara johet ki
+notify(): releaseli a threadet WAIT-bol, es RUNNABLE-be teszi. a sima notify() random valaszt a WAIT-elo threadek kozul, notifyAll() minden WAIT-ben levo threadet ebreszt (akik arra a keyre varnak!?)
+
+P: sync(lock) if(isFull(B)) lock.wait(); B[c++] = 1; lock.notifyAll(); => while helyett if! producer threadet WAIT-be teszi, ezaltal a thread altal fogott key releaselodik es a consumer felveheti; evegbol notifyolja az esetleg eppen WAIT-ben levo c-ket
+C: sync(lock) if(isEmpty(B)) lock.wait(); B[--c] = 0; lock.notifyAll(); => while helyett if! consumer threadet WAIT-be teszi, ezaltal a thread altal fogott key releaselodik es a producer felveheti; evegbol notifyolja az esetleg eppen WAIT-ben levo p-ket
+a lock kozos! tehat a p es c sync blokkjat ket thread nem execelheti egyszerre
+
+lock obj-hoz (keyhez) wait list tartozik, ebbe kerulnek a ra varo threadek
+
+P/C demo
+1) sync nelkul => race cond miatt a vegen nem lesz 0 a B (egyenlo szamu ++ es -- utan)
+2) while-os verzio + sync => DL. debug/suspendben latszik h az egyik thread (c) fogja a lockot es a whileban porog; a masik thread (p) pedig var a lockra
+3) while helyett if + wait/notify => vegen B = 0 (vagy pl. 50++, 45-- utan 5)
+
+thread state: running or not? ha not, akkor indithatja a scheduler? nem mindig, pl. ha a thread egy lock wait listjeben van, akkor a scheduler csak ugy nem utemezheti
+Thread.getState()
+NEW
+RUNNABLE: NEW-bol start() hatasara. itt a scheduler mar adhat neki idoszeletet
+TERMINATED: ha RUNNABLE-bol atkerul ide, akkor a scheduler mar nem utemezheti
+ezekbol visszakerulhet RUNNABLE-be:
+BLOCKED: RUNNABLE-bol kerul at ide, ha sync blokk bejaratanal all aminek a keye nem hozzaferheto
+WAITING: RUNNABLE-bol wait() hatasara kerul at ide; wait listbe kerul; notify() ebresztheti
+TIMED_WAITING: RUNNABLE-bol wait(ms) vagy sleep(ms) hatasara kerul at ide. az ido lejartaval a system automatikusan notifyolja
