@@ -60,7 +60,7 @@ C: while(isEmpty){NOP}; B[--c] = 0;
 ez igy race cond. minden P,C a sajat threadjeben fut es probalja W/R-ni a buffert => conc access miatt corrupt the array
 fix? sync magukat a p/c metodusokat? NOK, mert igy a P es a C instanceok lesznek a _kulon_ keyek
 kozos key kell: Object lock; es sync(lock) a p/c metodusokon belul
-ha B empty: a c-t futtato thread blokkolodik a whileban es fogja a keyt => p-t futtato thread var a sync(lock)-ra, de azt a c threadje fogja; ezert p nem tud adatot adni a B-hez => DL
+de ha B empty: a c-t futtato thread blokkolodik a whileban es fogja a keyt => p-t futtato thread var a sync(lock)-ra, de azt a c threadje fogja; ezert p nem tud adatot adni a B-hez => DL
 mo: parkoltatni kell a c threadjet ha producolasra var; es el kell engedni az altala tartott keyt h a p threadje hozzaferjen => wait/notify
 
 wait(): releaseli a thread altal tartott keyt. a thread WAIT statebe kerul, amibol notify() hatasara johet ki
@@ -92,7 +92,7 @@ TIMED_WAITING: RUNNABLE-bol wait(ms) vagy sleep(ms) hatasara kerul at ide. az id
 sync protect block of code => exec by only 1 thread at the same time => prevent race cond (pl. P/C)
 
 P/C count++, count--
-cache nelkul ez Ok lenne, de ma mar van cache :)
+cache nelkul ez OK lenne, de ma mar van cache :)
 - main mem: ~100 ns, 1 GB
 - CPU: tobb core, mindegyiknek sajat L1 (0.5 ns, 32 kb), L2 (7 ns, 256 kb); common L3
 
@@ -120,7 +120,7 @@ W-t es R-t ket kulonnbozo thread futtatja
 
 m1() { x = 1; sync(lock) {y = 1}}
 m2() { sync(lock) { r1 = y }; r2 = x;}
-T1 futtatja m1-et, T2 m2-et; r2 = ?
+T1 futtatja m1-et, T2 m2-et; r2 = ? (x,y,r1,r2 nem vol!)
 x = 1 HB y = 1 es r1 = y HB r2 = x mert uazon a metoduson belul vannak
 - ha T1 lep be eloszor: y = 1 HB r1 = y a sync miatt, es a fenti ket HB-vel egyutt latszik h r2 = 1 lesz
 - ha T2 lep be eloszor: r1 = y HB y = 1 a sync miatt, de r2 = x es x = 1 kozott nincs HB, nem tudjuk melyik lesz elobb, tehat nem tudjuk h r2 = 0 v 1 lesz
@@ -146,3 +146,40 @@ VolLongPadded {6db long; vol long = 0L; 6db long; } => ez igy isolated lesz egy 
 n db T(createUnpaddedRunnable) => R-ben az unpadded long modifyolasa tortenik => same line, false sharing
 n db T(createPaddedRunnable) => R-ben a padded long modifyolasa tortenik => diff line, no false sharing
 1 db thread eseten az unpadded es a padded eset perf kb =, 2 db thread eseten mar latszi h az unpadded eset lassabb
+
+[implementing threadsafe singleton on multicore CPU]
+
+private static Singl inst; private final Singl(); public static getInst() { if(inst == null) {inst == new Singl();} return inst;}
+inst == null R; inst = new... W. nincs koztuk HB. ha kul thread futtatja oket akkor race cond. ez nem threadsafe mo
+
+sync getInst()? ket thread nem tudja execelni tehat ez igy funkcionalisan OK
+1 core: T1 lep be eloszor syncbe, inst == null telj; ekkor sched atvalt T2-re aki viszont nem tud belepni syncbe mert T1 tartja a lockot; T2 kiutemezodik, T1 folyt, megkrealja az instanceot es kilep a syncbol. T2 most mar be tud lepni a syncbe es kiolvasni az instanceot
+2 core: T1 lep be eloszor syncbe, inst == null telj. mivel 2 core van, ezert T2 same time execelheti getInst()-t de hiaba van masik coreon nem tud belepni syncbe mert T1 tartja a lockot (T2 itt varhat egy kicsit mert tudja h egy masik coreon futo thread tartja a lockot es hatha elengedi), ugyhogy meg kell varnia amig T1 megkrealja az instanceot es kilep a syncbol. T2 most mar be tud lepni a syncbe es kiolvasni az instanceot
+pl. 4 core: T1 vegzi a krealast; de a tobbi 3 thread kozul mindig egyszerre csak egy tud olvasni a sync miatt, nem tudnak parh olvasni, ami perf--
+tehat multicoreon a sima sync nem eleg perf mo
+
+double checked locking: getInst() ne legyen sync
+getInst() { if(inst!=null) return inst; sync(key) {if(inst!=null) {inst = new();} return inst;}}
+elso inst!=null nem sync blockban van, tehat a R-k lehetnek parh
+a masodik inst!=null ell h ha egy masik thread mar megkrealta akkor azt vissza lehet adni
+
+- az elso inst!=null R, de nem sync es nem vol
+- az inst = new W, nem vol de sync
+ezek kozott nincs HB mert az csak sync/vol W/R-k kozt lenne
+ez 1 coreon nem gond mert ott nem issue a visibility
+de tobb coreon gond lehet
+az inst field egy pointer 1) mem area alloc 2) inst point to mem area 3) obj construction a mem areaban
+nem tudjuk h a 2) v 3) lesz elobb. ha 3) akkor OK. de ha 2) es masik threadbol probaljuk R, akkor nem fully built objt latunk
+
+ha inst vol lenne, akkor sync W majd vol R; HB megvan, de ezzel visszajutunk a perf-- problemahoz
+jo mo: enum Singleton {INSTANCE}
+
+korabbi LongWrapper pelda; ott az incr() metodusban synceltunk. mi lenne ha inkabb vol long lenne? nem jo, mert a vol R es vol W ugyan OK lesz, de az l = l + 1 nem atomic; kell a sync hogy egyben fusson le
+a korabbi synces mo egyebkent nem teljes, mert a get() nem volt sync (sem vol) => nem garantalt h az incr()-ben utoljara W-elt erteket olvassa majd ki
+
+Java puzzlers pelda: az app egy sync metoduson belul meghiv egy join()-t, de a metodus megsem fut le egyben => a join() JDK impl belsejeben van egy wait() ami ugye releaseli a lockot. mo: sajat lockkal is kell syncelnunk meg pluszban a join() korul
+
+conc programok irasa
+- race cond fielden lehet (varon, met paramon nem)
+- HB: R/W vol? sync?
+- sync vagy vol legyen? sync = atomicity, vol = visibility
