@@ -1,0 +1,191 @@
+Java Concurrency in Practice
+
+[Chapter 3. Sharing Objects]
+chapter 2: annak preventalasa h tobb thread accessalja uazt a datat same time. chapter 3: objk publisholasa ugy h tobb thread biztonsagosan tudja accessalni
+sync nem csak a kritikus reszek lehatarolasarol szol hanem visibilityrol is: nem csak azt akarjuk preventalni h egy thread modositsa egy obj statejet mikozben egy masik eppen hasznalja, hanem biztositani azt is h ha egy thread modositja egy obj statejet akkor mas threadek lassak a valtozasokat
+
+[[3.1. VISIBILITY]]
+ha tobb thread is ir es olvas egy vart, akkor nem garantalt h egy olvaso thread latni fogja egy masik thread altal beirt erteket
+
+class Novisibility { 
+  boolean ready; int number;
+  class ReaderThread extends Thread { run() { while(!ready) {Thread.yield();} sout(number);
+  main() { new ReaderThread().start(); number = 42; ready = true;
+main es a reader thread accessalja a ready es number shared varokat. sync hijan nincs garancia h a main thread altal beirt 42 lathato lesz a reader thread szamara; lehet h a while sosem all le. az is lehet h 0 lesz kiirva mert reordering miatt a reader thread a ready=true-t mar latja de a number=42-t meg nem
+
+[[[3.1.1. Stale Data]]]
+ha nem hasznalunk syncet minden helyen ahol egy var accessalva van, akkor stale data lehet (pl. reader thread out-of-date erteket lat a ready-ben)
+data olvasasa sync nelkul ~ DB READ_UNCOMMITTED, ahol accuracyt aldozunk perfert
+
+class MutableInteger { int value; int get(); void set(int)
+ez igy nem threadsafe; get()-et hivo thread stale datat lathat ha kozben egy masik thread eppen set()-el
+megoldaskent csak a set() syncelese nem eleg, mert a get() eredmenye igy meg mindig lehet stale data
+
+[[[3.1.2. Nonatomic 64-bit Operations]]]
+out-of-thin-air safety: ha egy thread sync nelkul olvas egy vart, az eredmeny lehet h stale, de legalabb annyit tudunk h nem random ertek, hanem vmely masik thread irta oda
+ez minden varra ervenyes kiveve a nem-volatile long es double varokat; ezek 64 bitesek, de a JVM olvashatja/irhatja oket ket 32 bites operkent; es ha ez tortenetesen ket kulon threadben tortenik akkor stale data lehet. az ilyen varok tehat legyenek volatilekent decl, vagy lockkal guardolva
+
+[[[3.1.3. Locking and Visibility]]]
+intrinsic lockok segitsegevel garantalhato h egy thread predictable modon lassa a masik altal vegrehajtott modositasokat
+thread A vegrehajt egy sync blockot, majd thread B belep egy uazon lock altal guardolt sync blockba, akkor latni fog mindent amit A a lock releaselese elott vegrehajtott
+ez tehat egy masik indok amiert a threadeknek _uarra_ a lockra kell syncelniuk shared mutable var accessalasakor
+lockolas tehat nem csak a mutual exclusionrol hanem a mem visibilityrol is szol
+
+[[[3.1.4. Volatile Variables]]]
+synchronization gyengebb formaja. ha egy fieldet volkent decl, az jelzi a compiler/runtime fele h ez a var shared es ne legyen reorderelve. vol varok nem lesznek cachelve, tehat egy vol var olvasasakor mindig a legutobbi iras eredmenyet latjuk
+vol varra lehet ugy gondolni mint a 3.1.1-ben a syncelt integer classra; csak a vol eseteben nincs lockolas es ezaltal nem okozhat thread blokkolast (+valojaban a sync hatasa a mem visibilityre erosebb, ld 16)
+
+egy vol var mas varok visibilityjere is hatassal lehet! ha thread A ir egy vol vart majd utana thread B olvassa, akkor a vol var olvasasa utan B latni fogja az _osszes_ olyan var erteket is amelyek thread A szamara lathatoak voltak a vol var irasa elott
+tehat mem vis szempontbol egy vol var irasa olyan mint sync blockbol kilepes, vol var olvasasa pedig mint sync blockba belepes. de vis szempontjabol ne hagyatkozzunk tulsagosan a volra; locking biztonsagosabb
+
+vol varok jo hasznalata: sajat statejuk vagy az altaluk hiv obj statejenek visibility biztositasa, vagy lifecycle event (init, shutdown) jelzese
+pl. status flag csekkelese loop exithez: volatile boolean asleep; while(!asleep()) countSheep();
+vol nelkul a thread nem biztos h eszlelne ha az asleep vart egy masik thread beallitja. itt egyszerubb a vol mintha lockingot hasznalnank
+teszteleshez JVM -server kapcsolo hasznalata javasolt, tobbet optimalizal mint client, es konnyebben kiderulnek problemak. itt pl. vol nelkul a server JVM kiemelhetne a loopon belul nem modositott asleep var csekkeleset a loopon kivulre, es ezaltal vegtelenne tehetne a loopot
+
+volnak megvannak a limitjei, pl. ++ opert nem teszi atomicka (az atomic varok hasznalhatoak "jobb vol var"-okkent, ld. 15)
+locking visibilityt es atomicityt is garantal, vol varok csak visibilityt
+vol var hasznalat kriteriumai: 1) var irasai nem fuggnek a jelenlegi erteketol vagy csak egyetlen thread updateli a vart valaha is 2) var nem vesz reszt invariantokban mas state varokkal 3) mas okbol nincs szukseg lockingra mikozben a vart accessaljuk
+
+[[3.2. PUBLICATION AND ESCAPE]]
+obj publishing: jelenlegi scopejan kivuli kod szamara elerhetove tenni (pl. ref storeolasa, returnoles nonprivate metodusbol, atadas masik class metodusanak)
+internal state varok publisholasa elronthatja encapst es nehezitheti az invariantok megorzeset; non-fully created objk publisholasa elronthatja thread safetyt
+ha egy objt akkor publisholunk amikor nem kellene: escaped
+
+ref storeolasa public static fieldben ahol bmely class es thread lathatja
+public static Set<Secret> knownSecrets; public void init() { knownSecrets = new HashSet<>();
+egy obj publisholasa indirekten publisholhat masokat is. ha Secret-et adunk a knownSecrets-hez akkor azt a Secret-et is publisholtuk mert bmely kod iteralhat a seten es szerezhet refet erre a Secret-re
+
+class UnsafeStates { private String[] states = new String[] {"AK", "AL"...}; public String[] getStates() { return states; }
+getStates() publisholja az elvben private statest, igy bmely caller modosithatja annak tartalmat; azaz a states escapelodott
+
+obj publisholasa publisholja a nonprivate fieldjei altal refelt objokat is
+egy class szempontjabol alien metodus amelynek a viselkedeset nem teljes mertekben maga a class spec: mas classbeli metodusok, overridable (nem private, nem final) metodusok. obj atadasat alien metodusnak publisholaskent tekinteni; nem lehet tudni h mi tortenhet vele a tovabbiakban, nem biztos h gond lesz de lehet
+
+class ThisEscape { 
+  public ThisEscape(EventSource s) { s.registerListener(new EventListener() {...})
+az EventListener publisholasa soran az enclosing ThisEscape inst is publisholodik, mert az inner class instok hidden reft tartalmaznak az enclosing instra
+
+[[[3.2.1. Safe Construction Practices]]]
+ThisEscape eseteben a this ref a konstr kozben escapel, ezert az obj nem properly constructed. a this-nek nem szabad a _threadbol_ escapelodnie amig a konstr nem returnol. konstr letarolhatja a this reft vhol, ha mas thread a konstr befejezodeseig nem nyul hozza (ld. SafeListener)
+this konstrbol valo escapelesenek jellemzo peldaja amikor threadet startolunk konstrbol. az obj szinte mindig shareli a this-jet az uj threaddel vagy expl (atadja a thread konstrnak) vagy impl (mert a Thread v Runnable inner classa neki). az uj thread igy lehet h mar azelott latja az owning objt mielott az fully constructed. konstrban thread krealas OK, de startolas nem annyira. helyette jobb egy init metodusban startolni az owned threadet (ld 7)
+
+private konstr es public factory metodus segitsegevel oldhato meg ha eventlistenert akarunk regisztralni v threadet startolni a konstrbol
+class SafeListener {
+  private final EventListener listener;
+  private SafeListener() { listener = new EventListener() {...
+  public static SafeListener newInst(EventSource s) { SafeListener sl = new SafeListener(); s.registerListener(sl.listener); return sl; }
+
+[[3.3. THREAD CONFINEMENT]]
+shareles syncelese helyett valaszthatjuk azt is h nem sharelunk; datat csak egy threadbol accessaljuk. ez akkor is threadsafe ha maga a confined obj nem az
+pl. Swing visual compok es data model objk nem threadsafek, hanem confinalva vannak az event dispatch threadbe
+pl. pooled JDBC Connection objk spec szerint nem kell threadsafek legyenek. az oket hasznalo reqk (servlet, EJB) tip single threadedek, tehat a conn implicite abba a threadbe confinalodik
+conf megvalositas a prgozo felelossege (pl. local varok, ThreadLocal haszn)
+
+[[[3.3.1. Ad-hoc Thread Confinement]]]
+thread conf kizarolag az impl felelossege 
+fragile; de donthetunk ugy h valamit single threadedkent impl, es az egyszeruseg elonyei felulirjak a veszelyeket
+spec eset: shared vol var read-modify-write-ja safe amig bizt h csak egy threadbol irjuk. azaz a threadbe confoljuk a modifyolasokat h preventaljuk a race condot, a visibility pedig garantalja h mas threadek az uptodate erteket latjak
+jobb a stack conf v ThreadLocal
+
+[[[3.3.2. Stack Confinement]]]
+(mas neven within thread v thread-local (nem ThreadLocal!))
+obj csak local varokon keresztul erheto el. local varok az execelo thread stackjen vannak, mas thread szamara nem lathatok. egyszerubb es kevesbe fragile mint adhoc
+primitiv local varoknal szandekosan sem tudjuk megserteni a stack confot, mert nem lehet rajuk reft szerezni
+obj refeknel figyelni kell h a ref ne escapeljen
+int loadTheArk() { SortedSet<Animal> animals; ... animals = new TreeSet<>();
+ezen a ponton pontosan egy ref van a Setre, egy local varban, tehat confolva van az execelo threadbe. de ha publisholunk egy refet a Setre (vagy az internaljaira) akkor a conf megserul
+nem threadsafe obj within-thread contextben threadsafe, de figyelni kell ra h ezt a design fazis utan se felejtsuk el (doc!)
+
+[[[3.3.3. ThreadLocal]]]
+per-thread valuet rendel egy objhoz. get() az utolso erteket adja vissza amit a set()-nek a jelenleg execelo thread atadott 
+
+gyakran mutable singletonok vagy global varok sharelesenek preventalasara haszn. pl. single threaded app egy global DB connectiont haszn h ne kelljen atadnia minden metodusnak; JDBC conn nem threadsafe, ezert ThreadLocalban taroljuk
+private static ThreadLocal<Connection> connectionHolder = new ThreadLocal<>() { public Connection initialValue() { return DriverManager.getConnection(DBURL);
+public static Connection getConnection() { return connectionHolder.get();
+
+pl. gyakran hasznalt opernek egy temp objra (pl. buffer) van szukseges de nem akarja minden invocnal reallokalni. pl. Java5 elott Integer.toString() ThreadLocal bufferben tarolta a formatalas eredmenyet; de ez nem igazan perf win, hacsak az oper nem nagyon gyakori v a buffer alloc nem nagyon draga
+
+ThreadLocal.get() elso hivasakor az initialValue() adja vissza az init erteket a thread szamara. ThreadLocal<T> olyan mintha Map<Thread,T> lenne
+singlethread app multithreadbe portolasakor a shared global varokat ThreadLocalba konvertalva megorizheto threadsafety (persze semanticstol fugg h minek van ertelme)
+app fwk gyakran haszn. pl. J2EE container egy EJB call idejere a transaction ctxtet az execelo threaddel kapcsolja ossze: static ThreadLocal tarolja a tr ctxet, es ha a fw tudni akarja h mely tr fut eppen, akkor ebbol fetcheli ki a tr ctxt
+ronthatja a reusabilityt, es hidden couplingokat okozhat, ne overuseoljuk
+
+[[3.4. IMMUTABILITY]]
+eddig leirt problemak tobbsege abbol eredt h tobb thread probalta uazt a mutable statet same time modositani. ha state nem modosithato akkor nincs ilyen gond
+immut obj aminek stateje konstr utan nem modosithato. threadsafe, invariantjait a konstr hozza letre es mindig megmaradnak
+egyszeruek (csak egy state), safek (mutable obj atadasa untrusted codenak veszelyes, immutnal nincs ilyen gond)
+
+immut nem csak annyi hogy minden fieldje final; mert final field is refelhet mutable objra
+obj immut: 1 stateje konstr utan nem modosithato 2 minden fieldje final (de olyan class is lehet immut amelynek nem minden fieldje az, pl. String nonfinal fieldben cachelni a hashcodeot, de az csak egy erteket vehet fel) 3 teljesen meg van konstr (this nem escapelodott konstr kozben)
+
+immut obj hasznalhat internal mutable objkat is a statejeben
+final class ThreeStooges { private final Set<String> stooges = new HashSet<>(); public ThreeStoges() { stooges.add(...); }
+Set mutable, de itt 1 a konstr utan nem lehet modifolni 2 stooges field final, tehat a ThreeStoges obj stateje csak final fielden at erheto el 3 this nem escapelodik konstr soran
+
+mas ha egy obj immut es mas ha a ramutato ref immut. immut objkban tarolt prg state is updatelheto ha az immut objkat egy masik statet tart instance-szal "replaceljuk"
+
+[[[3.4.1. Final Fields]]]
+final field nem modosithato, bar az altala ref obj igen ha mutable. segitsegukkel init safety (ld. 3.5.2)
+meg ha egy obj mutable is, final fieldek hasznalata jo practice; csokk a lehetseges statek szamat ("mostly immutable")
+
+[[[3.4.2. Example: Using Volatile to Publish Immutable Objects]]]
+UnsafeCachingFactorizer (2.3) ket AtomicReference fielddel nem volt threadsafe, mert a kettot egyutt nem atomic kezelte. vol sem oldotta meg. immut neha nyujthat weak atomicityt
+ha related data itemeken atomic kell tevekenykedni, immut holder obj hasznalhato
+class OneCacheValue { 
+  final BigInteger lastNumbers; final BigInteger[] lastFactors; 
+  OneValueCache(BigInteger i, BigInteger[] factors) { lastNumber = i; lastFactors = Array.copyOf(factors, factors.length); //clone() is lehetne
+  BigInteger[] getFactors(BigInteger i) { ... else return Arrays.copyOf(lastFactors, lastFactors.length);
+
+race condot megoldja. mutable holderrel lockolni kellene. itt varok updateje eseten mindig uj holder krealodik, de az elozo holderrel dolgozo threadek is konz stateben latjak azt
+class VolatileCachedFactorizer implements Servlet { 
+  private volatile OneValueCache cache = new OneValueCache(null, null);
+  service() { BigInteger[] factors = cache.getFactors(reqNr); if(factors == null) { factors = factor(reqNr); cache = new OneValueCache(reqNr, factors); } 
+ha egy thread uj OneValueCache-re allitja a cache reft akkor az uj cached data azonnal lathato lesz a tobbi thread szamara
+OneValueCache immut, es a cache fieldet egy code path csak egyszer accessalja ezert a cache related operek nem interferalnak egymassal. tehat tobb state varra van egy immut holder obj ami megtartja az invariantot, vol pedig bizt a visibilityjet; igy a class locking nelkul is threadsafe
+
+[[3.5. SAFE PUBLICATION]]
+eddig arra torekedtunk h ne publisholjunk objt; de neha sharelni kell objt threadek kozt. obj ref tarolas public fieldben nem safe
+public Holder holder; void init() { holder = new Holder(42);
+bar a konstr jol csinalja meg az invariantokat, vis prob miatt a Holder egy masik thread szamara inkonz/partially konstr allapotban lehet
+
+[[[3.5.1. Improper Publication: When Good Objects Go Bad]]]
+class Holder { int n; Holder(int n) { this.n = n; };  void assertSanity() { if(n!=n) throw new AssertionError();
+ha ezt az elobb latott modon publisholjuk akkor egy masik (nem a publisholo) thread AssertionErrort kaphat ha assertSanity()-t hivja
+nem magaval a Holder classal van a problema hanem a publisholassal; de megvedhetjuk ettol a Holdert ha az n field final
+
+improperly published objk problemai 1) mas threadek stale valuet (null vagy egyeb) lathatnak a holder fieldben 2) uptodate value a holder fieldben de stale valuet a Holder statejere. sot lehet h a thread elso alkalommal stale valuet, legkozelebb viszont uptodate valuet lat, ilyenkor van AssertionError
+valojaban a default valuek az elsok amiket az Object konstr ir be meg a subclass konstr elott; tehat a default valuek is lathatoak stale valuekent
+
+[[[3.5.2. Immutable Objects and Initialization Safety]]]
+immut objk sharelesere a JMM init safetyt bizt. mint lattuk az h egy obj ref vis egy masik thread szamara, nem jelenti h az obj stateje is vis; konzisztens obj state view nyujtasahoz sync kell
+immut objk akkor is safely accesselhetok ha az obj ref nem sync van publisholva (ha a Holder immut lenne akkor meg improper publisholas eseten sem lehetne AssertionError)
+properly constructed objk final fieldjei safely accesselhetok; de amennyiben ezek mutable objkra ref, akkor a referalt objk statejenek accessalasahoz sync kell
+
+[[[3.5.3. Safe Publication Idioms]]]
+nem immut objk publisholasa safe kell legyen; alt a publishing es a consuming threadnek is syncelnie kell
+safe publisholashoz az obj reft es az obj statet egyidejuleg kell vis tenni mas threadek szamara
+
+properly constructed objk safe publisholasa: 1 obj ref initelese static initializerbol 2 ref storeolasa volatile fieldben v AtomicReferenceben 3 ref storeolasa properly constructed obj final fieldjebe 4 ref storeolasa lockkal guardolt fieldbe 
+pl. obj threadsafe collkba helyezese teljesiti az utolsot: ha thread A berakja majd thread B kiveszi, akkor garantaltan abban a stateben latja ahogy A berakta, meg ha magaban a berako app kodban nincs is expl sync. Hashtable, SynchronizedMap, ConcurrentMap, Vector, BlockingQueue stb. safely publisholjak az objt a retrievelo thread szamara
+Future, Exchanger szinten safe publt bizt, ld. kesobb
+static initializer gyakran a legjobb mo; JVM class init timeban futtatja es a JVM internal sync biztositja a safe publt: public static Holder holder = new Holder(42);
+
+[[[3.5.4. Effectively immutable objects]]]
+objk amelyek per def nem immut, de a statejuk a publt kovetoen nem modif
+safely publisholt eff immut objket bmely thread safely hasznalhat additional sync nelkul
+
+pl. Date mutable, de ha immutkent hasznaljuk, akkor nem kell lockolnunk
+public Map<String, Date> lastLogin = Collections.synchronizedMap(new HashMap<String,Date>());
+ha a Date valeukat nem modif miutan beraktuk oket a Map-be akkor a syncMap syncje biztositja h a date valuek safely publisholhatoak
+
+[[[3.5.5. Mutable Objects]]]
+ha egy obj konstr utan modosithato, a safe publ csak a publisholaskori state visibilityjet bizt. mutable objnak nem csak a publisholasat kell sync, hanem minden accesseleset is, h a subsequent modifok is lathatoak legyenek. mutable objkat safely kell publisholni ES threadsafenek v lock altal guardoltnak kell lennie
+publisholas ofogl: immut obj barhogyan, eff immut obj safely, mutable obj safely es threadsafe v lock altal guardolva kell lennie
+
+[[[3.5.6. Sharing Objects Safely]]]
+objk conc use/share-re von policyk
+thread-confined: egy thread altal ownolva es confinalva, csak az owning thread modositja
+shared read-only: tobb thread is conc accessalhatja additional sync nelkul, de nem modosithatjak. immut es eff immut objk ide tart
+shared thread-safe: internally van syncelve, ezert tobb thread is accessalhatja additional sync nelkul
+guarded: annak szamara accessalhato akinel a lockja van. ide tart a mas threadsafe objkba encapsulalt objk, es a lockkal guardolt published objk
