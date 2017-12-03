@@ -1,0 +1,37 @@
+[[4.2. INSTANCE CONFINEMENT]]
+data encapsolasa objba a data osszess accesset confinalja az obj metodusaiba; ezt egy megfelelo lockinggal kombinalva nem threadsafe objk hasznalhatok threadsafe modon
+
+obj confinalhato class instanceba (private class member), lexical scopeba (local var) vagy threadbe (obj atadhato metodusbol metodusba de csak uazon a threaden belul)
+
+class PersonSet { private final Set<Person> mySet = new HashSet<>(); public sync void addPerson(Person p); public sync boolean containsPerson(Person p);
+PersonSet stateje a HashSet, ami nem threadsafe, de private ezert confinalva van a PersonSetbe, es az ot accessalo ket code path mindegyike a PersonSet lockjat acqolja. Person threadsafetyjet nem tudjuk de ha mutable akkor tovabbi sync kell ha accessalni akarunk egy PersonSetbol retrievelt Persont. legjobb ha a Person threadsafe; kevesbe megbizhato ha a Person objkat lockkal guardoljuk es figyelunk h a clientek azt megfeleloen acqoljak. a locking nem csak az intrinsic lock lehet mint itt, mas-mas state varokat kulonbozo lock is guardolhat (ld. ServerStatus...)
+
+JDK-ban jopar class van csak azert h nem threadsafe classokat threadsafe-e tegyen; pl. nem threadsafe basic coll classokhoz (ArrayList, HashMap) wrapper factory metodusok (pl. Collections.synchronizedList). decorator pattern: a wrapper obj synckent implja az osszes metodust es o fwdolja a reqket az underlying coll objnak
+
+conf objt kipublisholasa a tervezett scopebol bug (iteratorok, inner classok reven indirekten is kipublisholodhat)
+
+[[[4.2.1. The Java Monitor Pattern]]]
+obj az osszes mutable statejet encapsulalja es a sajat intrinsic lockjaval guardolja (pl. Counter 4.1)
+
+JDK classok is haszn, pl. Vector, Hashtable. egyszeru, de neha finer-grained locking kellhet (ld. 11)
+
+intrinsic lock helyett masfajta lockkal, pl. private field obj is lehet guardolni. elony h a lock encapsolva van; vs public locknal a client kodnak is reszt kell vennie a megfelelo syncben
+
+[[[4.2.2. Example: Tracking Fleet Vehicles]]]
+minden vehiclet egy String id azonosit es van egy x,y MutablePoint locationje. 
+class MonitorVehicleTracker { 
+  private final Map<String, MutablePoint> locations; 
+  public sync getLocations { return deepCopy(locations); } 
+  public sync getLocation(String id) { if(locations.get(id) !=null) return new MutablePoint(loc);}
+  public sync setLocations(...);
+  private static Map<String, MutablePoint> deepCopy(Map<String,MutablePoint> m) { Map<String, MutablePoint> result = new HashMap<>(); for(String id: m.keySet()) result.put(id, new MutablePoint(m.get(id))) ; return Collections.unModifiableMap(result);
+
+pl. MVC GUI-nal egy view thread es tobb updater thread kozott sharelodhet a data. bar a MutablePoint nem threadsafe, a tracker class igen; sem a map, sem a benne levo pointok nem publisholodnak, mindig copyt ad vissza. deepCopy() nem csak bewrappeli a Mapet, mert az csak magat a collt vedene, a benne levo objkat a caller ettol meg modosithatna (HashMap copy constral valo feltoltese sem lenne jo, mert csak a pointok refjei masolodnanak nem maguk a point objk)
+
+a copyzas altalaban nem perf-- csak ha a set nagyon nagy; illetve mivel a deepCopy() sync metodusbol hivodik, egy hosszu masolas feltarthatja a futast. valamint getLocations() eseteben a returnolt coll contentje nem valtozik meg, meg ha az underlying locationok valtoznak is; requirementtol fugg h ez igy OK-e
+
+[[4.3. DELEGATING THREAD SAFETY]]
+
+
+
+
