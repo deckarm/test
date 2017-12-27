@@ -1,0 +1,150 @@
+Microservices architecture (Rag Dhiman)
+
+[Introduction]
+
+service: piece of sw, provides func to other pieces of sw (website, mobile app, desktop app, masik service stb) within the sys. komm nw-n keresztul
+sys ami ilyen modon hasznalt servicekbol epitkezik az a SOA. nem pakoljuk bele uazt a funct minden clientbe hanem a func servicekent van providolva, es tobb client reusolhatja
+scalability: uaz a service tobb serveren, elottuk load balancer
+standardized contract/iface, ez allando, mogotte a service kodja modosithato
+stateless: aktualis req minden szukseges detailt tart, elozo reqre nem kell emlekezni
+
+---
+microservice
+SOA done well
+megfelelo size. hagyomanyos SOA monolit servicekbe degradalodhatott
+scal/perf/flex
+kis service, single focus
+lightweight, gyors komm: distr (tobb servicen ativelo) tranzakciok miatt szukseges
+technology agnostic API: service nem kenyszeriti a clientjeire a technologiat (pl. Java servicet .NET kliens is hasznalhat)
+minden msnek sajat DBje
+service independently changeable/deployable: nincs mas servicekhez, clienthez kotve
+centralized tooling mgmt
+
+client - internet - website1, website2 - API GW - service1,service2,service3
+mindegyik servicenek kulon DB-je van
+mindegyik servicebol tobb instance letezik, az API GW routol a megfelelohoz
+---
+monolit
+packed in together
+nincs size megkotes
+nagy kodbazis
+kis valtozasnal is az egesz syst redeployolni kell
+fix tech stack
+coupling++ (module, service szinten is)
+failure az egesz systemre kihatassal lehet
+scale nehez, az egeszet le kell masolni
+lenyegeben az egyetlen elony h konnyen replikalhato az env
+
+client - internet - website - account/orders/promotion/etc - DB access - DB (egy DB)
+                     (UI)            (business)                 (data)
+					 
+---
+MS iranti need
+valtozasokra gyorsan kell tudni reagalni
+reliability (egy resz breakje ne breakelje az egesz syst)
+business domain driven design: tukrozze az org strukturat
+automated test tools
+release/depl tools
+on-demand hosting techn (VMek cloudban)
+technologiai valtozasokat kovetni kell tudni
+async comm: distr tranzakcioknak nem kell varniuk az egyes servicek befejezodesere
+
+benefitek: dev time-- (kulon teamek egymastol fgtl dolgozhatnak az egyes reszeken), megbizhato/gyors depl, gyakori updatelhetoseg, security (nem csak 1 DB van ahol ha gond van akkor az egesz syst erinti; distr data). uptime++ (csak egy servicet kell ujradepl). scal++ (egy servicebol sok instance lehet). perf++. 
+
+---
+design principlek
+- high cohesion: single focus/resp done well. ld.SOLID SRP. one reason to change
+- autonomous: independently changeable/deployable. msnek ne kelljen megvalt ext sys/masik ms/client/stb megvalt miatt. loose coupling
+- business domain centric: service egy business funct/domaint repr (accounts, orders, products etc), ld. DDD bounded contexts
+- resilience: embrace failure. degrade func (pl. promotion ms failureje eseten a hasznalo website nem esik ossze csak nem irja ki a promotionokat) v default func (ratet szolgaltato postage ms failureje eseten az ezt hasznalo order ms vmi default rate-tel kezd el dolgozni). tobb ms instance (register/deregister reven a load balancer mindig tudja h mely instanceok mukodnek eppen)
+- observable: sys health legyen visible. centralized monitoring/logging
+- automation: testing tools, CI, depl
+					 
+====					 
+[Microservices Design]
+
+high cohesion 
+identify single focus (business function/domain)
+keep splitting until one reason to change
+ne zsufoljuk: pl. ne tartalmazza egyutt az accounts es az invoicing reszeket; legyenek kulon ms-ek sajat DB-vel
+ne vonjunk ossze "kind of the same" megokolassal
+
+autonomous
+loose coupling, komm nw-n keresztul
+- sync: req-resp
+- async: event publishing/subscribing, msg brokeren (queue) keresztul
+techn agnostic API: pl. REST over HTTP and data in JSON
+client libek kerulendoek (pl. order serviceben accounts client library impl az accounts servicehez) mert coupling++
+servicek kozott fixed contract/iface. pl. shared order model az order es az accounts servicek kozott; kulonbozik a magaban az order serviceben levo internal order modeltol; az internal model valtozasa nem okozza a shared model valtozasat is)
+ne legyen tul sok exchange a msk kozott
+ne legyen sharing a msk kozott (pl. DB, libek)
+ownership by team
+versioning strategy
+
+business domain centric
+identify in coarse manner (accounts, sales, marketing). ezek aztan finomithatoak
+common language
+ms for data (CRUD) or functions
+
+resilience
+fel kell arra kesziteni, h egy ms failureja ne rantsa magaval az egesz syst
+degrade v default func
+fail and recover fast: pl hanging tranzakciok eseteben gyorsan csinalni kell vmit mert kulonben all a sys. timeoutok hasznalata, pl. X sec utan valtsunk at a default funcra
+
+observable
+realtime monitoring
+structured logging
+monitoring vs logging: az elobbinel countokat/measureket rogzitunk, az utobbinal eventekkel kapcs infokat
+distr transactionok tracelese: correlationID
+
+automation
+CI, CD
+
+===
+[Technology for Microservices]
+
+sync comm
+req-resp. client to service, service to service, service to external
+RPC: elrejti h valojaban nem localra hanem remotera hivunk. erzekeny a valtozasokra
+HTTP: msk kozt is hasznalhato; firewall friendly
+REST: CRUD using HTTP verbs (GET,POST,PUT,DELETE). natural decoupling: a msgkben JSON/XML, ami kulonbozik az internal data formattol. endpoint: http://Service/Account/23. HATEOAS: including links to related rscs in the responses (pl. ha uj accountot krealunk POST-al akkor a response tart egy linket az ujonnan krealt accountra, amit GET-el felhasznalhatunk)
+sync commhoz mindket party available kell legyen. pl. distr tranzakcioban resztvevo egyik ms vagy akar maga a nw lelassul az perf--
+
+async comm
+event based
+nem kzvtl a masik servicehez kapcs hanem msg brokeren keresztul (publ/subsc)
+MSMQ, RabbitMQ, Atom(HTTP to propagate events)
+complicated, distr tranzakciok miatt (pl. trk visibilityje)
+dependent a msg brokertol
+
+virtualization
+hoston VM-ek, ezeket futnak az ms-ek. nem kell fizikai gep, HW simulated on SW
+cloud platformokra lehet subscribolni (Platform As A Service, PAAS). MS Azure, Amazon Web Services. sajat cloud (pl. vSphere)
+VM snapshotolhato, instanceok cloneozhatoak
+
+containers
+type of virtualization
+VM-ekkel ellentetben nem futtatnak teljes OS-t, csak a ms futtatashoz szukseges minimumot (kisebb rsc igeny, gyorsabb mint VM)
+Docker, Rocker, Glassware
+
+self hosting
+sajat cloud, virt platform, containerek
+sajat fiz server
+maintenance challenging
+
+registration and discovery
+new ms instance hova? (host, port, version)
+service registry DB => register on startup, deregister on failure
+cloudon straightfwd
+lehet self v 3rd party reg
+discovery: clientek kozvtl kapcs a registry DB-hez v vmilyen gatewayen/load balanceren keresztul es az csinalja a discoveryt a clientek szamara
+
+monitoring tech
+Nagios, PRTG, load balancers, New Relic
+metrics across servers, aggregate, visualize
+new ms instance automatikusan/minmal configgal kezdjen el monitorozodni
+nw monitoring (distr trk miatt)
+standardized
+real-time
+
+logging tech
