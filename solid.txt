@@ -1,0 +1,65 @@
+SOLID Principles of Object Oriented Design (Steve Smith)
+
+[The Single Responsibility Principle]
+
+SRP: every obj should have a single resp and that resp should be entirely encaps by the class
+Uncle Bob: there should never be more than one reason for a class to change
+pl. zsebkes ami mindent tud, csak nem megy bele a zsebembe. "just because you can, doesn't mean you should"
+
+cohesion: module/class respjei mennyire relatedek es focusedek
+coupling: az a degree amivel egy module/class relyol a masik modulon/classon
+cel a high cohesion es a loose coupling
+
+tobb resp => valoszinubb valtozas
+tobb resp egy classban osszecouplolja ezeket e respeket
+egy change minel tobb classt erint, annal valoszinubb a hiba
+
+demo
+Rectangle class
+- area()
+- render(): GUI liben dependal
+a classt ket app hasznalja
+- geometry service: no GUI, csak az area()-t hivja
+- graphical app: fokent render()-t hivja, esetleg az area()-t is. szinten dependal a GUI liben
+mivel a Rectangle dependal a GUI liben, a geometry service pedig hasznalja a Rectanglet, ezert a GUI lib valtozasakor a geometry servicet is recompilolni kell, bar az tenylegesen nem hasznalja a GUI libet
+Rectanglet kette kellene vagni, az egyik reszben lenne az area() masikban meg a render()
+
+Order class
+tulkepp shopping cart, amit egy website es egy point of sale app hasznal
+metodusai: chargeCard(), checkout(), notifyCustomer(), reserveInventory()
+Checkout() hivja a cC()-ot, aztan a rI()-t aztan a nC()-t ha kell
+nC() dependal SMTP-n, rI() egy InventorySystemen, cC() egy PaymentGW-n
+problemak: cash tranzakcioknal nem kell credit card, point of sale tranzakcioknal nem kell inventory reserve se email notif. a notif, credit card processing, inv management bmilyen valtozasa affectalja az Ordert, es azon keresztul a web es point of sale appokat
+
+refactor
+respek menten vagjuk szet
+ifacek es metodusaik: INotificationService.notifyCustomerOrderCreated(), IReservationService.reserveInventory(), IPaymentProcessor.processCreditCard()
+Order szetvagasa tobb classba: - - OnlineOrder: website csak ezt hasznalja. mindharom ifacen dependal
+- PoSCreditOrder: csak IPP ifacen dependal
+- PoSCashOrder: egyik ifacen sem dependal
+Order class abstract, fieldje a Cart, es csak a checkout() metodus van benne (ami h DB-be loggol). Ordert extendalja a fenti harom konkret order class, ezekben vannak a dependenciak az ifacekre
+OnlineOrder.checkout() { pP.pCC(cart.amount); rS.rI(cart.items); nS.nCOC(cart); super.checkout();
+PoSCreditOrder.checkout() { pP.pCC(cart.amount); super.checkout();
+PosCashOrder: konstruktoraban super(cart), a base class hajtja vegre a checkoutot
+pl. NC valtozasa most mar csak az OnlineOrdert affectalja, a PoS-ra nincs hatassal
+
+resp: reason to change. "a difference in usage scenarios from the clients perspective" (?)
+tobb kis iface (ld. ISP) segitsegevel elerheto az SRP 
+
+SRP: coupling--, higher++
+tobb kisebb class distinct respekkel => design flex++ (if,switch,branching--)
+
+[The Open / Closed Principle]
+
+OCP: sw entities (class,module,func etc) should be open for ext but closed for modif
+"open chest surgery is not needed when putting on a coat"
+hasonloan, amikor extendaljuk a swunket akkor nem kellene belenyulnunk az internaljaiba ahhoz h megvaltoztassuk a behaviourjet. tudnunk kellene uj classokat/funcokat hozzaadnunk anelkul h az existing classokat/funcokat valtoztatnunk kellene
+
+open to ext: new behaviour can be added in to future
+closed to modif: changes to source or binary not required (nem kell recompile)
+
+behav change code change nelkul hogyan?
+rely on abstractions. minden abstrt tetszoleges szamu modon tudunk impl, azaz tetszoleges modon valtoztatni az abstractionoket hasznalo codeok behavjet
+
+demo
+calculator ami megserti OCPt
