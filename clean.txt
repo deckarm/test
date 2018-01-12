@@ -1,0 +1,439 @@
+Clean Architecture: Patterns, Practices, and Principles (Matthew Renze)
+
+[Introduction]
+epitesz pelda: ket architect 1: megcsinalja a terveket, leadja es elbucsuzik 2: az egesz folyamat soran vegig egyutt dolgozik azokkal akik vegul hasznalni fogjak az epuletet
+
+sw arch: high level (higher mint a kod), vmilyen structure, layers (vertical partitionok), components (horizontal partitionok a layereken belul), relationship ezek kozott
+levels of abstractions (piramis fentrol lefele): system - subsystems - layers - components - classes - data and methods
+ez a course foleg a layers es components szintekkel fogl + az impl peldak soran a classes es data szintekkel is. a microserv resz soran a subsystems szinttel
+
+messy arch (spagetti): tul complex (accidental es nem necessary complexity), incoherent (reszei nem illenek ossze), rigid (nehez valtoztatni kesobb), brittle (nehez ugy hozzanyulni vhol h annak ne legyen mellekhatasa mashol), untestable (az arch miatt nehez v lehetetlen unit v integration testeket irni) => unmaintainable
+clean arch (lasagne): simple (csak annyira complex amennyire szukseges, a complexity nem accidental), understandable ("easy to reason about the sw as a whole"), flexible (konnyen adaptalhato a changing requirementekhez), emergent (az arch a project elettartama alatt evolvalodik), testable (az arch egyszerubbe es nem nehezebbe teszi a tesztelhetoseget) => maintainable
+clean arch: arch that is designed for the inhabitants (users, developers, maintainers) of the arch, not for the architect or the machine (i.e. avoid premature optimization)
+arch essentialism: focusing what is essential to the sw architecture vs what is just an implementation detail
+
+miert eri meg a clean arch?
+cel: cost/benefit, min cost, max value, max ROI
+clean arch
+- focus on the essential: primary inhabitantok/userek use caseit/mental modeljeit probalja lekepezni az archba/kodba
+- build what is necessary, when it is necessary: csak a userek immediate needjeit kielegito featurok/arch; no unnecessary features, accidental complexity, premature perf opt, arch embellishment (diszites) => cost--
+- optimize for maintainability: mert a sw maint idoszaka jellemzoen lenyegesen hosszabb mint a development
+
+decisions
+context is king: arch teren szinte minden kerdesre az a valasz h "it depends"
+all decisions are a tradeoff: gyakran egyik complexity helyett kell egy masik complexityt valasztanunk amelyik meg mindig jobb nekunk
+a decisionoket ugy kell probalni meghozni h min(cost) es max(business value)/max(ROI) legyen
+align the arch with business goals: pl. egy rigid requirementekkel rendelkezo embedded rsznel traditional arch/sw dev lehet jo; de egy olyan projektnel amiben nagy az incertainity, ott a risk-- a primary business objective, es agile sw dev process segitsegevel tudjuk evolvalni a productot/archt ahogy tobb infot tudunk meg
+use your best judgment
+
+demo (.NET)
+pages: home, customer, employees, products, sales
+sales page: id, date, employee, product, unit price, qty, total price (create sale: customer, employee, product, qty)
+
+code projects
+Presentation: UI
+Application: abstractionok a use casekhez
+Domain: abstractionok a problem/business domainhez
+Persistence: iface a DB-hez
+Infrastructure: iface az OS-hez es 3rd party depekhez
+Common: cross-cutting concerns/AP
+Specification: acceptance tests
+
+SQL DB tablak: Customer, Employees, Products, Sales (benne cust, emp, prod ID oszlopokkal)
+
+===
+[Domain-centric Architecture]
+classic 3-layer DB-centric arch: DB kozepen, korulotte Data Access akorul Business Logic akorul UI
+domain-centric arch: domain kozepen, korulotte app, akorul presentation + persistence + infrastr. a DB csak egy impl detail az archon kivul
+
+Uncle Bob: the first concern of the architect is to make sure that the house is usable; not to ensure that the house is made of brick
+
+essential vs detail (haz pelda)
+space is essential: ha nem lenne ter amiben lakni lehetne, akkor a haznak nem lenne ertelme ("serve no purpose")
+usability is essential: ha nem lennenek benne szobak es egyeb featureok, akkor megint csak nem lenne ertelme
+ezek az inhabitantok primary needjeit szolgaljak. minden mas csak impl detail (pl. epitoanyag, diszites)
+
+arch vonatkozasban uez
+domain is essential: enelkul a sys nem repr a userek mental modeljeit
+use cases are essential: ezek nelkul a sys nem oldana meg a userek problemait
+presentation is a detail: UI lehet megvalositva ASP.NET, JSP stb
+persistence is a detail: data lehet tarolva SQL, noSQL, JSON file stb
+persze a pres/pers technologiak fontosak, de a user problemak megoldasa szempontjabol nem essentialok
+
+DB centric archban minden dep a DB, domain centricben minden dep a domain fele mutat
+domain centric arch peldak
+- hexagonal arch (Alistair Cockburn): layered, app layer (es ezaltal tranzitivan a domain) a kozpontban. plugines arch, portok + adapterek. az arch outer layerjei adaptaljak az inner app layert a klf presentation/persistence mediumokhoz, external systemekhez. az app UI, DB, egyeb external dep nelkul, isolationban futtathato es tesztelheto
+- onion arch (Jeffrey Palermo): layered, kozepen a domain model/app core, korulotte domain services, akorul app services, legkivul UI + Tests + Infrastructure (ennek resze a persistence). minden dep a kozep fele mutat tehat az inner layerek nem dep az out layereken. ez is uugy isolationban tesztelheto
+- clean arch (Uncle Bob): layered, kozepen az entities (domain), akorul a use cases (app layer), akorul adapters: controllers + presenters + gateways (ezek adaptaljak az app coret az ext dependencykhez), akorul ports: devices + web + UI + ext ifaces + DB. magaban foglalja az Ivar jacobson fele BCE archt is: hogyan kell a 
+presentation es app layereket wire-upolni
+lenyegeben mindegyik uaz: kozepen a domain model, korulotte az app layer (use cases), adaptalja az appot az impl detailekhez, es minden dep befele a domain fele mutat
+
+domain centic arch pros
+focus on domain: essential to the inhabitants (users + developers) => cost--
+less coupling a domain logic es impl details (presentation, DB, OS) kozott => flex++, adaptable++. arch az ido soran konnyebben evolvalhato
+allows for DDD
+
+domain centic arch cons
+change is difficult: sokan csak a traditional archot ismerik
+requires more thought: mi tartozik a domain modelbe es mi az app layerbe (vs traditionalnel minden megy a business logicba)
+initial higher cost: vs traditional. de komplex es hosszu lifecycleju projecteknel kifizetodik
+
+demo app depek
+Presentation -> Application -> Domain
+Persistance, Infrastructure -> Application
+Persistance -> Domain
+
+Domain project
+folderek key entityk szerint (DDD: aggregate root entities): Customers, Employees, Products, Sales + shared Common (pl. IEntity iface itt)
+rich domaint hasznal (DDD) nem anemicet
+class Sale implements IEntity { fieldek: qty, totalPrice, unitPrice; Id, DateTime, Customer, Employee, Product; getterek/setterek. qty es unitPrice setterekben logic van: meghivja updateTotalPrice()-ot
+
+domain model: abstract repr of the business problem being solved
+nem szabad h a domain abstractionok (classok, attributeok) beleleakeljenek az app impl detailekbe
+
+===
+[Application Layer]
+layers: boundaries of vertical partitions of an app designed to
+repr diff levels of abstraction, maintain SRP, isolate dev roles and skills, help support multiple impls, assist with varying rates of change
+slice an app into manageable units of complexity
+
+classic 3 layer arch layerek: UI, business logic, data access
+egyszeru CRUD muveleteket vegrehajto appokhoz jo, de complex/rich domain modelekkel nem mukodik jol egyutt + kerdeses h a domain-level ill az app-level abstractionok hova keruljenek?
+
+modern 4 layer arch
+presentation (user iface into the app), app (use cases as executable code + abstractions), domain (domain logic)
+negyedik layer az infrastr: ebben a peldaban kettebontva persistence es infrastr dobozokra, ezek az appon dependalnak
+persistence a DB-n, infrastr az OS-n es egyeb 3rd party componenteken dependal
+cross-cutting concerns oldalt ativelnek a layereken a pres-tol a pers/infr-ig
+ennek lehetnek valtozatai, pl. tobb UI, webservice layer stb
+
+app layer
+impl use cases as executable code: pl. user searches  for product, adds to cart, pays with credit card
+this code is structured as high level repr of app logic: pl a productot searchelo query; a carthoz ado command stb
+tud a domain layerrol (dep), de nem tud a tobbi layerrol (pers, infr)
+contains ifaces for its deps: ezeket impl az outer layerek. IoC fw + dep inj wireupolja az ifaceket es az impljaikat runtimeban
+
+layer deps
+flows of control uezen a diagramon. usertol a DB-ig ill OS-ig vegig lefele 
+vs a depeknel ott vannak a pers-bol ill infr-bol a domain es az app fele "felfele" mutato nyilak
+dep inv: details should depend on abstractions es nem forditva
+pers/infr layerekben impl az IoC patternt: pers -> app dep, de app -> pers flow of control
+ennek benefitjei: independent deployability (replacelhetjuk a prodban levo implt egy masikkal anelkul h affectalna az abstractiont), flex/maint arch (pl. pers/infr kiswappolhato anelkul h annak hatasa lenne az app es domain layerekre. ez hasznos agile appoknal ahol az impl decisionoket a leheto legkesobb (last responsible moment) celszeru meghozni amikor mar minel tobbet tudunk)
+neha kell egy plusz pers -> domain dep is amikor ORM-t hasznalunk (map domain entities to DB tables), mert a pers layernek ismernie kell a domain layerben levo entityket
+
+demo app
+Presentation: SalesController
+Application: ICreateSaleCommand, CreateSaleCommand, IDatabaseService, IInventoryService
+Domain: Sale
+Persistence: DatabaseService
+InfraStructure: InventoryService
+Cross-cutting: DateService, IDateService (iface es impl egy helyen)
+
+depek
+SalesController -> ICreateSaleCommand 
+CreateSaleCommand -> IDatabaseService, IInventoryService
+CreateSaleCommand -> Sale
+minden dep az app azaz tranzitivan a domain fele mutat
+
+impl
+CreateSaleCommand -> ICreateSaleCommand
+DatabaseService -> IDatabaseService
+InventoryService -> IInventoryService
+implk az abstractionokon (ifaceken) dependalnak, es pers, infr -> app IoC van
+
+app layer pros
+focus on use cases (benefitjeit ld korabban)
+easy to understand: a use casek high-level executable code, ami delegal a low-level stepeknek
+follows DIP: flex, maint. impl decisionok kesobbre halaszthatoak, ezaltal az arch evolvalodhat
+
+app layer cons
+additional layer cost
+requires extra thought: mi tartozik az app layerbe es mi a domain layerbe
+IoC kezdetben counter-initiative
+
+---
+demo app class szinten
+Application project: folderjei a key entityknek (aggregate rootoknak) felelnek meg: Customers, Employees, Products, Sales: use caseknek megfelelo commandokat, queryket tart
+Interfaces folder: ifacek. high level abstractionok amelyeket a pres, pers, infrs layerekben impl
+
+pres layerben
+class SalesController: MVC controller, sales webpagek display
+konstrban beinjektalva C-Q ifacek (IGetSalesListQuery, IGetSaleDetailQuery, ICreateSaleCommand), controller ezeknek delegal: createSaleCommand.execute();
+
+app layerben
+interface ICreateSaleCommand { void execute(CreateSaleModel model);
+class CreateSaleModel { int customerId, employeeId, productId; int qty; + getterek/setterek
+class CreateSaleCommand implements ICreateSaleCommand 
+  konstrban beinjektalva: IDateService, IDatabaseService, IInventoryService (ezek mas layerekben impl) + ISaleFactory (ez magaban az app layerben van impl)
+  void execute(CreateSaleModel model) { //high level use case logic jol olvashato, delegal az implknak
+    dateService.getDate(); customer = database.customers.single(model.customerId); employee = database.employees.single(model.employeeId), product = database.products.single(model.productId); qty = model.qty; ; sale = factory.create(date,customer,employee,product,qty); database.sales.add(sale); database.save(); inventory.notifySaleOccured(product.Id, qty);
+
+interface IDatabaseService { IDbSet<Customer> customers; IDbSet<Employee> employees; IDbSet<Product> products; IDbSet<Sale> sales; + getterek/setterek; void save();
+app iface-e a DB v egyeb pers data store fele. high level abstraction
+repository pattern: DB table entityket domain objkent repr; DB CRUD muveleteknek megfelelo metodusokat nyujt
+unit of work pattern: maintains a list of domain objs affected by a command executed in the app, and coordinates writing these changes into the DB (save())
+ugy kezelhetjuk a domain objainkat mintha collok volnanak es nem DB tablek
+  
+pers layerben
+class DatabaseService implements IDatabaseService
+DbContext-et is impl ami vmi .NET-es ORM base classa ami a domain obj -> DB record mappelest kezeli
+app layer az impl detailekrol nem tud, barmikor kiswappolhatjuk az implt vmi masikra anelkul h app v domain logicot eltornenk
+DBContext resze az IDatabaseService-ben levo IDbSet tipus is, amit az egyszeruseg kedveert hasznalt; mert egyebkent ez egy impl detail beleleakelve az app layerbe
+IDatabaseService-ben ezenkivul ISP viol lehet h az osszes entity repo muvelet egy helyen van exposolva (jobb lenne kulon ISaleRepository stb minden aggregate root-hoz)
+
+IInventoryService, IDateService, IDateService es impljaik uezen az elven
+
+===
+[Commands and Queries]
+
+CQS
+command: does something. should modify state, should not return value
+query: answers a question. should not modify state, should return value
+
+CQS exceptions
+pop stack: remove item(command), return top item (query)
+create new record: create record (command), return ID (query)
+
+CQRS arch: arch levelre extendalja a CQS-t. 
+app layer szetbontasa command stackre es query stackre
+users - pres - (queries - data access) - DB
+users - pres - (commands - domain - pers) - DB
+commandnak writingre, querynek readingre kell optra lennie
+command: execute behaviours in the domain model, mutate state, raise events, write to DB
+query: retrieve data from DB, project to format for pres, display to the user
+perf ++, clarity++
+CQRS = domain centric arch in a smart way: command talk to the domain, query talk directly to the DB 
+
+CQRS types
+- single DB: egy kozos 3NF rel DB v NoSQL DB
+commands exec behav in the domain, modif state, save to DB pers-en (ami leggyakrabban ORM) keresztul
+queries exec directly to the DB using a thin data access layer (ami ORM using projections, link to SQL, SP)
+legegyszerubb
+- two DB: read DB es write DB kulon
+write DB opt for writes: 3NF rel DB v NoSQL DB
+read DB opt for queries: 1NF rel DB v denormalized read-opt data store
+write DB modifok rendszeresen atpusholva a read DB-be (single coordinated transaction across the DBs v eventual consistency pattern: temp out-of-consistency, de vegul cons lesz (tip ms-kon belul))
+komplexebb, de nagysagrendekkel gyorsabb read mint a single (hiszen alt nagysagrendekkel tobb idot toltunk DB readdel mint writetal)
+- event sourcing: nem tarolja az entity stateket normalized write DB-ben, hanem a state modifokat tarolja un event storeban. egy entity current statejenek eleresehez az eventeket kell replayelni. ha ezt elertuk akkor mehet az exec domain logic es modify entity state (amit szinten eltarolunk eventkent h majd visszajatszhato legyen). vegul atpusholjuk az entity current statejet a read DB-be igy a read queryk tovabbra is gyorsak lesznek
+legkomplexebb de sok benefitje van
+az eventek tarolasa reven audit trailt biztosit a systemhez
+point-in-time reconstruction: event bmilyen idopontbeli stateje visszajatszhato, debughoz is hasznos
+replay events: diagnosis, debugging, load testing, regression testing soran jol hasznalhato
+entityk current statejet tobb mint 1 read-opt datastoreba lehet projectalni, es aztan azokbol queryzni
+prod DB rebuildelheto az eventek visszajatszasaval
+write oldal opthato pl. periodikus snapshotolassal
+
+CQRS pros
+more efficient domain centric design (commands use the rich domain model to modify state, queries coded directly against the DB)
+optimized perf
+event sourcing benefits
+CQRS cons
+inconsistence _across_ command and query stacks, komplexebb (de stackeken belul cons)
+tobb DB komplexebb, eventual cons szukseges
+event sourcing ktgek
+
+demo query side
+single DB CQRS-t haszn
+Presentation: SalesController
+Application: IDatabaseService; IGetSalesListQuery, GetSalesListQuery; IGetSaleDetailQuery, GetSaleDetailQuery
+Persistance: DatabaseService
+
+pres layerben a mar latott class SalesController; konstrban beinjektalva Q ifacek (IGetSalesListQuery, IGetSaleDetailQuery); salesListQuery.execute();
+
+app layerben
+interface IGetSalesListQuery { List<SalesListItemModel> execute();
+class SalesListItemModel { int id; DateTime date; String customerName, employeeName, productName; int qty; double unitPrice, totalPrice; + getterek/setterek 
+DTO obj, datat tart, de magaval a presentationnal nem fogl, az a pres layer feladata
+class GetSalesListQuery implements IGetSalesListQuery { 
+  konstrban beinjektalva IDatabaseService
+  List<SalesListItemModel> execute() { sales = database.sales.select(p => new SalesListItemModel(p.id, p.date, p.Customer.Name, p.EmployeeName, p.productName, p.unitPrice, p.qty, p.totalPrice); return sales.toList();
+.NET-es language-integrated-query concepttel dolgozik: entitykre irja a queryt amit aztan a fw atmappel SQL-re
+
+projection: subset of data with a different shape than the actual data stored in the DB (pl. csak a customer.name, employee.name es product.name). ez igy jobb perf mint lazy v eager load of entities
+lazy query: 10 queryt general: 1 query a sales datanak (SELECT Sales colummnjai FROM Sales). es 3-3-3 query a saleshez kapcsolodo customerekhez/employeekhez/productokhoz (SELECT Customer fieldjei FROM Sales INNER JOIN Customers WHERE ID = 1 (2,3; Employee-re es Productra is). ezek vegeredmenyben mind a 4 tabla osszes sorat betoltik, ahelyett h csak azt a datat toltene be ami a sales list generalasahoz szukseges lenne. slow query resp time, excessive load on the DB
+eager query: on-demand tolti be az entityket es not one-at-a-time mint elobb. csak 1 query (SELECT Sales columnjai, Customers columnjai, Employees columnjai, Products columnjai FROM Sales INNER JOIN Customers INNER JOIN Employees INNER JOIN Products (IDk szerint join)). de ez is betolti mind a 4 tabla osszes sorat: SELECT reszben ott van a customer/employee/product tablak minden oszlopa: itt most ezeknek csak id+name fieldjei vannak, de ha ennel tobb lenne akkor azokat is mind betoltene, fgtl attol h azokra nincs szukseg a sales list generalashoz
+tenylegesen hasznalt projectionos query: itt ics csak 1 query. mint az elozo de itt a SELECT reszben a Customers/Employees/Products tablakbol csak a name fieldek. perf++ (query time), eff++ (DB load)
+
+GetSaleDetailQuery implements IGetSaleDetailQuery uezen az elven
+  SaleDetailModel execute(int saleId) { sale = database.sales.where(p => p.id==saleId).select(p => new SalesListItemModel(p.id, p.date, p.Customer.Name, p.EmployeeName, p.productName, p.unitPrice, p.qty, p.totalPrice).single(); return sale; //fluent API
+  
+===
+[Functional Organization]
+the arch should scream the intent of the sys
+org the arch around the use cases (amelyek a user-sys interactionoket repr. pl. paying a vendor, purchasing a product)
+epulet blueprint klf szobakkal: ranezesre latszik rajta h ez egy lakas. use cases: sleep in the bedroom, cook in the kitchen etc
+de pl. egy 5 db ajto, 20 db fal stb felsorolasbol ez nem latszik
+
+folder/namespace org: 
+categorical cohesion: componentek szerint (pl. models, views, controllers) 
+func cohesion: use cases szerint (pl. customers, products, vendors)
+utobbi alapjan jobban lathato ranezesre h mi a sw intentje
+categorical olyan mintha a vasvillat a konyhai villa melle raknam mert mindketto villa; funcnal a kes, villa, kanal kerul egymas melle
+
+app treemap: klf szinu teglalapokbol felepulo hier visualization
+az egesz teglalap az app
+ezen belul a nagyobb teglalapok az elso szintu (aggr root) folderek: Application, Products, Employees, Customers, Interfaces
+ezeken belul az individual classes/ifaces
+latszik belole h mi az app funcja/intentje
+spatial locality: egyutt useolt itemek egymashoz kozel tarolva fiz spaceben (filesys folder structure)
+ezt kiterjesztve a tobb layeres apunkra: legalso szinten a pers es az infrastr treemapek, folotte domain, afolott app, afolott pres
+
+func org pro
+spatial locality: items used together live together (ld villak)
+easy to navigate: Presentation layer Employee folderjeben elvileg mind megtalaljuk az employeevel kapcs MVC-ket
+avoid vendor lock-in: nem kell a vendor fw impl folder strukturajat kovetnunk
+func org con
+lose fw conventions
+lose fw automatic scaffolding (mert alt categ cohesion szerint rakjak ossze a templatejeiket)
+proj kezdeti szakaszaban egyszerubb a categ szerinti (de aztan a kesobbiekben meg mar jobb lesz a func szerinti)
+
+demo app
+layereken belul aggr rootok szerint (Sales, Customers...)
+Presentation: webpageknek/screeneknek megfelelo aggr rootok szerint
+Application: use caseknek megfelelo aggr rootok szerint
+Domain: domain entityknek megfelelo aggr rootok szerint
+Persistance: DB tableknek megfelelo aggr rootok szerint
+Infrastructure: OS componentek es 3rd party ext depek szerint (inventory system, networking stb)
+Common: aspectek szerint (datetime, logging, security stb)
+ha a sys jol van megdesignolva akkor ezek correspondolnak (sales screen a sales use casekhez, sales domain entitykhez stb)
+van meg egy Specification project is, errol majd kesobb. ez szinten aggr rootok szerint rendezve
+
+===
+[Microservices]
+components: layerek subdividolasa ha mar tul nagy a meretuk. tip kulon projectkent impl (kulon .jar) igy kulon lehet rajtuk dolg, igeny szerint integralni, independent deploy
+userek tip vmi composite UI-on keresztul komm az appal (sales, support, inventory), amely a megfelelo component stacket hivja (UI sales - BLL sales - DAL sales) es ez alapjan presentalja a usernek a sys viewt. alt kozos DB
+
+problem domain
+sales: sales opportunity, contact, sales person, product, sales territory; support: support ticket, customer, support person, product, resolution
+regen ezek a nounok egy single unified domain modelbe mergelve, ahol uarra a fiz objra mutatnak. pl. sales.product es support.product uazzal a product entityvel modellezve; pl. sales.contact es support.customer uazzal a customer entityvel mert hasonloak, sales.sales_person es support.support_person mogott uaz az employee entity
+nagyobb domainekben nehezebb single unified domain modelt krealni
+ha tobb overlapping contextben szeretnenk h mukodjon egy model (sales es support) az vszeg nem lesz jo: pl. fenti customernel unused propertyk, metodusok, amelyek csak az egyik v masik contextben jatszanak. emellett terminologiai zavarok is lehetnek (person vs employee vs...)
+
+bounded context: contextual scope amelyen belul egy model valid
+subdivideolhatjuk a modelt: sales nounok az egyik bounded contextben, support nounok a masikban. nincs overlap. kommunikaljuk a state transitionoket egyik modelbol a masikba (contact - customer, product - product, sales person - support person) clearly def ifaceken keresztul, v coordinated transactionok v eventual consistency segitsegevel
+
+ez vezet el a ms archhoz
+subdivide monolith
+communicate via clearly-defined ifaces: alt lightweight web protocols (json over http via REST APIs)
+subdivide to smaller dev teams: 1 team/MS v  1 team/setofMSs
+independent services: sajat pers medium, prg lang, arch, OS. ezenkivul independently deployable/scalable (cloud-scale appshoz jo)
+~SOA: de itt nincs ESB hasznalata eloirva + egyeb kulonbsegek
+
+bounded contextekhez alignolnak: sales: (domain, ms, DB, dev team) "egyben"; uigy a support-hoz
+ez igy maxolja a domain entityk cohesionjet egy bounded contexten/ms-en belul es minimalizalja a couplingot minden mas lehetseges sys particionalashoz viszonyitva
+minden team egy single knowledge domainre fokuszalhat. tobbi msrol csak azt kell tudniuk h a joldef ifaceken keresztul h tudnak komm veluk
+minden domain/msnek consistent data modelje: egy bounded contexten belul minden entity cons; mas msekkel lehet temp incons (eventual cons model)
+independence: egy msen belul a team tetszoleges technt, archt, pers mediumot, OSt stbt hasznalhat, ami az adott domainnek legjobban megfelel
+
+ms jell kerdesek/vitak: mekkora legyen egy ms es hol huzzuk meg a boundaryket?
+pl. ms per aggr root: az elobb felirt sales: (domain, ms, DB, dev team) bontas helyett (domain, (contact,product,sale), DB, dev team); uigy a supporthoz is (de tovabbra is egy DB/bounded context van)
+
+ms ~ ravioli. minden raviolon belul high coh es low coupling; elhideoljak az internaljaikat a tobbiek elott; es kiswappolhatoak egy uolyanra anelkul h a tobbit disruptolnak
+
+ms pros
+flatter cost curve: vs monolit. kezdetben meg magasabb amikor a sys kicsi, de sokkal lassabban no ahogy a sys nagyobb lesz
+cohesion++/coupling--: nem csak kodban, hanem dev team, domain knowledge, DB models stb vonatkozasban is
+independence: ld. elobb
+ms cons
+magasabb up-front cost mint single domain. small domain/short project lifecyclenel nem biztos h erdemes
+Conway's Law: "organizations which design systems are constrained to produce systems that mirror the comm structures of their organizations" (pl. traditional top-down bureucracy orgok, waterfall project teamekkel valszeg inkabb monolit appokat fognak csinalni, mig bottom-up org, agile project teamekkel valszeg inkabb ms archokat csinalnak). ha maga az orgunk nem olyan akkor valszeg nehezebb lesz mseket fejleszteni
+distr sysek additional costjai: nw latency, fault tolerance, load balancing etc. javaslat: kezdjunk single appal es csakkor breakeljunk msekbe amikor a monolit ktgei mar meghaladjak a msek add ktgeit (ez alt akkor jon el amikor overlapping bounded contexteket probalnank monolit appba lekepezni)
+
+demo app
+eddig standalone appot felteteleztunk: users -> sales -> inventory
+mostantol orders -> sales -> inventory, ezek mind ms-ek egy nagyobb sales systemen belul
+
+uj project a kodban: Services
+web-based API, ennek segitsegevel tud az orders ms uj salet krealni
+ebben is van egy SalesController, de ez web API controller es nem MVC controller: ext systemek szamara nyujt xml/json komm ifacet es nem userek szamara webpaget
+itt most csak sima HTTP GET/POST-ok lesznek, es nem fogl load balancinggal, fault tolerance es egyebekkel amik real life msk eseteben fontosak. ott lehetnek mas komm csatornak is: msg queue/bus, event hub
+
+Service projectben
+class SalesController extends ApiController {
+konstrban beinjektalva C-Q ifacek (IGetSalesListQuery, IGetSaleDetailQuery, ICreateSaleCommand)
+  IEnumerable<SalesListItemModel> get() { listQuery.execute(); }
+  SaleDetailModel get(int id) { detailQuery.execute(id); }
+  HttpResponseMessage create(CreateSaleModel sale) { createCommand.execute(sale); return new HttpResponseMesasage(Status.CREATED); }
+
+Application projectben
+  class CreateSaleCommand implements ICreateSaleCommand 
+  ezt mar lattuk korabban de most megnezzuk h komm egy ext ms-el
+  void execute(CreateSaleModel model) { ... inventory.notifySaleOccured(product.Id, qty); //notify inv ms that a sale occured. real life ms-ben az id vmi intersys shared key lenne, pl. sku (stock keeping unit)
+interface IInventoryService { void notifySaleOccured(int productId, int qty); //repr inv ms as a high-level abstraction
+
+Infrastructure projectben
+class InventoryService implements IInventoryService {
+  //hardcoded AddressTemplate, JsonTemplate fieldek ({0} placeholderekkel), real life ezek nyilvan configbol injektalva
+  konstrban beinjektalva: IWebClientWrapper
+  void notifySaleOccured(int productId, int qty) { address = format(AddressTemplate, productId); json = format(JsonTemplate, qty); client.post(address, json); //kitolti a placeholdereket, majd kuldi a HTTP POST-ot az inv ms-nek
+interface IWebClientWrapper { void post(String address, String json);
+class WebClientWrapper implements IWebClientWrapper { void post(String address, String json) { //.NET WebClient-et wrappel be ami tenylegesen kuldi a HTTP msgt} 
+  
+===
+[Testable Architecture]
+jelenleg jell: keves es ineffective/inefficient testing (indoklas: not enough time, not my job (hanem a teszteloke..), too hard (az arch miatt))
+clean arch konnyebbe teszi a tesztelest is
+
+TDD ciklus
+1 create a failing test (red)
+2 get the test to pass (green): pont annyi prod kodot irunk meg h atmenjen
+3 improve code (refactor): kodot + tesztet is. use the test to drive the design of the arch
+
+comprehensive unit of tests: covers all code paths
+drives testable design
+maintainable++
+eliminates fear from change
+
+test typeok
+what: unit, integr, component, service, UI
+why: func, acceptance, smoke, exploratory
+how: automated, semi-auto, manual
+
+test auto pyramid
+unit legalul (autom, in isolation), folotte service (autom, set of classes/units), afolott UI (autom, full app func UI-tol DB-ig). piramis folott manual felho
+piramisban felfele haladva egyre ktgesebbek a testek: pl. unit testek gyorsan es konnyen krealhatoak, gyorsan futnak, ritkan false positive es konnyebben maintainelhetoek vs full UI testek ennek megfeleloen unit testbol van a legtobb
+
+acceptance test
+verify app func
+business nyelven megfogalmazott completeness criteriak, product ownerek/stakeholderek szempontjabol
+leggyakrabban manual testek v coded UI testek formajaban. de amint lattuk a full testek problemasabbak. clean arch segit abban h ezeket autom service-level acceptance testekkel replaceljuk (mert az app/domain logic isolationben tesztelheto)
+eliminaljuk a UI-t az acc testekbol; helyette direktben az app layer C-Q-ival dolgoznak
+eliminaljuk a DB-t az acc testekbol; mock fake in-mem DB
+eliminaljuk az OS es egyeb infr depeket; helyettuk mockok. hasonloan a cross-cutting concerneket is
+mivel ezeket ugy irtuk meg h semmi v minimal business logic ne legyen bennuk, ezert lehet oket eliminalni a tesztekbol, es az app/domain logicra focusolni
+(nonfunc, security, auditing requirementek tesztelesere persze mas megfontolasok)
+igy lehet minimalizalni az acc celra hasznalt coded UI testek szamat; ezeket inkabb csak smoke test celokra hasznal
+manual testeket is minimalizalja; tesztelok helyette fordithatjak az idejuket exploratory tesztelesre
+
+testable arch 
+pros: easier to test, improves design (testable code => maintainable code), eliminate fear from change
+cons: nem nagyon vannak. higher up-front cost, kisebb projectnel lehet h nem eri meg. requires discipline/practice. team commitment nelkul nem igazan mukodik
+
+demo app
+class SaleTests: sima unit test, csekkeli h unit price/qty atallitasakor h valt a total price
+
+class CreateSaleCommandTests: mockokkal, inmem DB-vel, testekben command.execute(model) es verifyolja h az add(), save(), notifySaleOccured() metodusok meghivodtak-e
+  
+---
+service-level acc test
+
+Feature: Create a sale
+As a sales person 
+I want to... 
+Scenario: Given the following sale info (Date, Customer, Emp... ertekek)
+When I create a sale, Then the following  sales record should be recorded (Date, Customer, Emp... ertekek) 
+And the following notification record should be sent to the inv sys (Prod, Qty ertekek)
+high-level, angolul, a business nyelven leirva. nem fogl low-level techn impl detailekkel (UI, DB, ext web API stb)
+
+class CreateASaleSteps { 
+  AppContext context; //ennek segitsegevel mockolja ki az external depeket (DateService, DatabaseService stb)
+  @Given("the following sale info") //mappeli a feature file szoveget exec code-ra (az ott latott tablat)
+  public void givenTheFollowingSaleInfo(Table table) { //table adatokbol model-t kreal }
+  @When("I create a sale")
+  public void whenICreateASale() { command.execute(model); }
+  @Then("the following sales record should be recorded") 
+  public void thenTheFollowingSalesRecordShouldBeRecorded(Table table) { //DB sales lookup, es assertalasok }
+
+===
+[Evolving the Architecture]
+
