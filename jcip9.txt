@@ -1,0 +1,121 @@
+Chapter 9. GUI Applications
+
+Swing: safety okokbol bizonyos taskoknak az event threadben kell futniuk. de hosszan futo taskok nem execelhetoek az event threadben mert UI unresp lesz. es a Swing data strukturak nem threadsafek ezert be kell confinalni oket az event threadbe
+
+szinte minden GUI toolkit (pl. Swing, SWT) single threadad subsyskent van impl, ahol minden GUI activity egy threadbe van confinalva. ha nem teljesen single threaded prgt akarunk irni akkor lesznek olyan activityk ami reszben egy app threadben reszben az event threadben fognak futni. ha ezt a szetosztast rosszul csinaljuk meg attol a prg nem fog azonnal elcrashelni, viszont nehezen felderitheto hibak lehetnek. bar maguk a GUI fwk single threaded subsysek, a mi appunk nem biztos h az, es ezert figyelnunk kell a threading issuekra
+
+[[9.1. WHY ARE GUIS SINGLE-THREADED?]]
+regen a GUI appok single threadedek voltak, es a GUI eventek a "main event loop"-bol processalodtak. modern GUI fwk kicsit masok: dedicated event dispatch thread (EDT) a GUI eventek kezelesere
+
+Java single threaded GUI fwk pl. Qt, NextStep, MacOS Cocoa, XWindows stb. probaltak multithreaded GUI fwket irni de sok race cond/DL problema volt, vegul single threaded event queue model lett amelyben egy dedicated thread fetcheli ki az eventeket a queuebol es dispatcheli oket az app defined event handlereknek (AWT-ben multithreadinggel szerzett rossz tapasztalatok miatt lett a Swing single threaded)
+
+multithreaded GUI fwkben konnyen lehet DL, input event processing es a GUI componentek OO modelingje kozti szerencsetlen interakcio miatt. a user actionok "felgyuruznek" OS-tol az appba: OS detektalja az mouse clicket, ebbol a toolkit "mouse click" eventet csinal es vegul az app event listenerhez vmi higher level event formajaban erkezik meg, pl. "button pressed". az app actionjai pedig forditott iranyban "legyuruznek" az appbol az OS-be: component background color megvaltoztatasa az appbol indul, component classnak dispatchelodik, vegul pedig rendering celjabol az OS-be. uannak a GUI objnak activityk altal az "ellenkezo iranybol" valo accessalasa, egyutt azzal requirementtel h minden obj legyen threadsafe, incons lock orderinghez es ezaltal DL-hez vezet (ld. 10). gyak minden GUI toolkit fejlesztese soran ebbe utkoztek
+
+masik ok ami multithreaded GUI fwkben DL-hez vezethet, a MVC pattern gyakorisaga. user interactionok refactoralasa kooperalo M,V,C objkba leegyszerusiti a GUI appok impljat de incons lock orderinget okozhat. C behiv a M-be ami notifyolja a V-t h vmi changed. de a C a V-be is behiv ami visszahiv a M-be h lequeryzze a statet; ebbol incons lock ordering es DL lehet
+
+a single threaded GUI fwk thread confinement reven erik el a thread safetyt: minden GUI obj, beleertve a visual componenteket es a data modeleket, csak az event threadbol van accessalva. emiatt az app developer felelossege is h az ezek az objk megfeleloen confinedek legyenek
+
+[[[9.1.1. Sequential Event Processing]]]
+GUI appok fokent fine grained eventeket processalnak, pl. mouse click, key press, timer expiry. az eventek egyfajta taskok; AWT/Swing event handling ~ Executor
+
+mivel a GUI taskok feldolgozasa single threaded, ezert seq, egy task befejezodik mielott a kov elkezdodik es nincs overlap. emiatt a task code megirasa egyszerubb mert nem kell tartani attol h mas taskok interferalnak
+
+seq task processing hatranya ha egy task sokaig execel akkor mas taskoknak varniuk kell amig befejezodik. ha a varo taskok pl. user inputra kellene valaszoljanak v visual feedbacket kellene providolniuk akkor ugy tunik mintha az app lefagyott volna. ha egy hosszu task fut az event threadben akkor a user meg cancelt sem tud nyomni mert a cancel button listener nem hivodik meg amig a hosszu task be nem fejezodik. ezert az event threadben futo taskoknak gyorsan vissza kell adniuk a controlt az event threadnek. ha hosszu taskot akarunk inditani, pl. spellcheck, filesys search, rsc fetch over nw, akkor azt masik threadben kell inditanunk h a control gyorsan visszajusson az event threadbe. ha a hosszan futo taskrol progress indicatort akarunk updatelni v visual feedbacket adni amikor completel, akkor szinten az event threadben kell kodot execelni; ez hamar komplikaltta valhat
+
+[[[9.1.2. Thread Confinement in Swing]]]
+Swing componentek (pl. JButton, JTable) es data model objk (pl. TableModel, TreeModel) az event threadbe confinalva, ezert ezeket az objkat accessalo bmilyen kodnak az event threadben kell futnia. a GUI objkat nem sync, hanem thread conf tartja cons. elonye h az event threadben futo taskoknak nem kell synccel fogl ha presentation objkat accessalnak, hatranya h az event threaden kivulrol nem lehet a presentation objkat accessalni
+
+Swing single-threaded rule: Swing componentek es modelek csak az EDT-n belulrol lehetnek krealva, modifolva es queryzve
+kivetelek: par Swing metodus safely hivhato bmely threadbol (JavaDocban leirva). egyeb kivetelek
+- SwingUtilities.isEventDispatchThread(): current thread ?= event thread
+- SwingUtilities.invokeLater(): az event threadben valo execre schedulal egy Runnablet (bmely threadbol hivhato)
+- SwingUtilities..invokeAndWait(): az event threadben valo execre schedulal egy Runnablet es blokkolja a current threadet amig ez completelodik (csak non-GUI threadbol hivhato)
+- repaint/revalidation requestet az event queueba enqueueolo metodusok (bmely threadbol hivhatoak)
+- listener add/remove metodusok (bmely threadbol hivhatoak, de a listenerek mindig az event threadben lesznek invokolva)
+
+invokeLater()/invokeAndWait() ~ Executor. a SwingUtilities threading related metodusait single threaded Executorral konnyu impl (valojaban nem igy vannak impl mert a Swing mar az Executor fw elott letezett de ma valszeg igy csinalnak)
+public class SwingUtilities {
+  private static final ExecutorService exec = Executors.newSingleThreadExecutor(new SwingThreadFactory()); private static volatile Thread swingThread;
+  private static class SwingThreadFactory implements ThreadFactory { public Thread newThread(Runnable r) { swingThread = new Thread(r); return swingThread; }
+  public static boolean isEventDispatchThread() { return Thread.currentThread() == swingThread; }
+  public static void invokeLater(Runnable task) { exec.execute(task); }
+  public static void invokeAndWait(Runnable task) throws InterruptedException, InvocationTargetException { Future f = exec.submit(task); try { f.get();} catch(ExecutionException e) { throw new InvocationTargetException(e); } }
+  
+a Swing event threadre lehet ugy gondolni mint single threaded Executor ami az event queuebol processalja a taskokat. mint thread pooloknal, itt is lehet h worker thread meghal es replacelodik egy masikkal, de ez a taskok szamara transparent. a seq, single threaded exec egy jo exec policy ha a taskok rovidek, scheduling predictability nem lenyeges es lenyeges h taskok ne execelodjenek conc
+
+public class GuiExecutor extends AbstractExecutorService {
+  private static final GuiExecutor instance = new GuiExecutor(); private GuiExecutor(); public static GuiExecutor instance() { return instance; } //singleton
+  public void execute(Runnable r) { if(SwingUtilities.isEventDispatchThread()) r.run(); else SwingUtilities.invokeLater(r); } //+ lifecycle metodus implk
+executor ami SwingUtilitiesnek delegal. mas fwkkel uigy lehet (pl. SWT Display.asyncExec() ~ SwingUtilities.invokeLater())
+
+[[9.2. SHORT-RUNNING GUI TASKS]]
+GUI appban az eventek az event threadbol indulnak es felgyuruznek az app-provided listenerekbe amelyek vszeg vmit szamolnak ami affectalja a presentation objkat. egyszeru, rovid taskoknal az egesz action lehet az event threadben; hosszabb taskoknal a processing egy resze tortenhet masik threadben
+
+egyszeru esetben presentation objk confinalhatoak az event threadbe. pl. button aminek a szine megnyomaskor random valt
+JButton button = new JButton("rnd"); button.addActionListener(new ActionListener() { public void actionPerformed(ActionEvent e){ button.setBackground(new Color(random.nextInt();))}} )
+EDT -> mouse click -> action event -> action listener -> set color
+amikor a user megnyomja a gombot, a toolkit az event threadben ActionEventet kuld minden registralt action listenernek. valaszkent az action listener pickel egy uj szint es megvalt a gomb hatterszinet. tehat az event a GUI toolkitbol indul, deliverelodik az appnak, es az app modifyolja a GUIt valaszkent a user actionre. a control sosem hagyja el az event threadet
+legtobbszor ehhez hasonlo a GUI app es GUI kozti interakcio. amig a taskok rovidek es csak GUI objkat accessalnak (v egyeb thread-confined v thread-safe objkat) addig a threading concernek majdnem teljesen ignoralhatoak, es minden vegrehajthato az event threadbol
+
+egy kicsit komplikaltabb verzio, ahol van vmi data model pl. TableModel v TreeModel
+EDT -> mouse click -> action event -> action listener -> update table model -> table changed event -> table listener -> update table view
+Swing a legtobb visual componentet ket objba splitteli, modelbe es viewba. a displayelendo data a modelben van, a display ruleok pedig a viewban. a model objk eventeket fireolhatnak, jelezve h a model data changed, a viewk subscribolhatnak ezekre az eventekre. ha a view kap egy eventet ami azt jelzi h a model data megvaltozhatott, akkor lequeryzi a modelt az uj dataert es updateli a displayt. tehat egy button listenernel ami egy table contentjet updateli, az action listener updateli a modelt es meghivja a fireXXX metodusok egyiket, ami invokolja a view table model listeneret, ami updateli a viewt. a control itt sem hagyja el az event threadet (a Swing data model fireXXX metodusai mindig direktben hivjak a model listenereket, es nem submittalnak uj eventet az event queuenak, ezert a fireXXX metodusokat csak az event threadbol szabad hivni)
+
+[[9.3. LONG-RUNNING GUI TASKS]]
+ha minden task rovid lenne (es az appnak nincs jelentos non-GUI resze) akkor az egesz app futhat az event theradben. de komolyabb GUI appok execelhetnek taskokat amik hosszabb ideig tartanak mint amennyit a user varni akar, pl. spell check, background compile, remote rsc fetch; ezeknek mas threadben kell futniuk h a GUI resp maradjon
+
+Swingben egyszeruen futhatnak a taskok az event threadben, de (Java 6 elott) nem volt mech amivel a GUI taskok mas threadekben execelhettek volna kodot. de mi is krealhatunk sajat executort a hosszu taskok processalasara, nem kell hozza Swing. cached thread pool jo valasztas a hosszu taskokhoz; GUI appok ritkan inditanak sok hosszu taskot ezert kicsi vg h a pool tulsagosan megnone
+
+task, ami nem supportalja a cancelt es progress indicationt, es completionkor nem updateli a GUIt. kesobb majd egyesevel hozzaadjuk ezeket a featureoket
+ExecutorService backgroundExec = Executors.newCachedThreadPool(); 
+button.addActionListener(new ActionListener() { public void actionPerformed(ActionEvent e) { backgroundExec.execute(new Runnable() { public void run() { doBigComputation(); } } )} } )
+ez egy visual componenthez boundolt actionlistener ami executornak submittal egy hosszu taskot. bar ket inner class layer is van benne, straightfwd: a UI action listener az event threadben hivodik, es egy Runnablet submittol execre a thread poolnak
+
+ez fire-and-forget modon veszi el a taskot az event threadtol, ami valszeg nem tul szerencses; alt van vmi visual feedback amikor a task completel. de a background threadbol nem accessalhatunk presentation objkat, ezert completionkor a tasknak egy masik taskot kell submittalnia, ami az event threadben fut es updateli a UI-t
+button.addActionListener(new ActionListener() { public void actionPerformed(ActionEvent e) { button.setEnabled(false); label.setText("busy"); backgroundExec.execute(new Runnable() { public void run() { try { doBigComputation();} finally { GuiExecutor.instance().execute( new Runnable() { public void run() { button.setEnabled(true); label.setText("idle"); }} ) }  } } )} })
+ebben mar harom inner class layer van. az action listener eloszor inaktivalja a buttont es busyre allitja a label textet, aztan submittal egy taskot a background executornak. az a task amikor befejezodik, akkor bequeueol egy ujabb taskot ami az event threadben fut, es ujra enableli a buttont es restorolja a label textet
+a button megnyomasakor triggerelt task harom seq subtaskbol all amelyek execje az event thread es a bacground thread kozt alternal. az elso subtask updateli a UI-t h jelezze h a hosszu task elkezdodott, es elinditja a masodik subtaskot egy background threadben. amikor befejezodik, a masodik subtask bequeuolja a harmadik subtaskot, ami az event threadben fog futni, ez updateli a UI-t h jelezze h a muvelet befejezodott. ez a fajta "thread hopping" jell a GUI appokban a hosszu taskok kezelesere
+
+[[[9.3.1. Cancellation]]]
+bmely task ami eleg hosszu ahhoz h masik threadben kelljen futtatni, valszeg eleg hosszu ahhoz is h user cancellalni akarja. cancel implhato direktben thread interruptionnal, de egyszerubb a Future
+
+ha cancel()-t hivunk egy Futuren ahol a mayInterruptIfRunning true, akkor a Future impl interruptolja a taskot execelo threadet ha az conc fut. ha a task interruptra responsivan van megirva, akkor cancelkor returnolhet
+Future<?> runningTask = null; //thread-confined
+startButton.addActionListener(new ActionListener() { public void actionPerformed(ActionEvent e) { 
+if(runningTask == null) { runningTask = backgroundExec.submit(new Runnable() { public void run() { 
+while(moreWork) { if(Thread.currentThread().isInterrupted()) { cleanUpPartialWork(); break;} doSomeWork(); }} } )}} })
+cancelButton.addActionListener(new ActionListener() { public void actionPerformed(ActionEvent e) { if(runningTask!=null) runningTask.caancel(true);}})
+pollozza a thread interrupt statusat es interruptnal returnol
+mivel a runningTask confinalva van az event threadbe, nem kell sync amikor setteljuk v checkeljuk; a start button listener biztositja h egy idoben csak egy background task fut. de jobb lenne ha lenne notif is amikor a task completel, pl. cancel button disable
+
+[[[9.3.2. Progress and Completion Indication]]]
+mint lattuk ha Future repr egy hosszan futo taskot, azzal a cancel impl leegyszerusitheto. FutureTask-ban van egy done() hook amiben completion notifot tudunk csinalni. ez akkor hivodik ha a background Callable completed. ha ebben triggerelunk egy completion taskot ami az event threadben fut, akkor konstrualhatunk egy olyan BackGroundTask classt egy onCompletion() hookkal, ami az event threadben hivodik. a szinten az event threadben invokolodo onProgress() hook segitsegevel a progress indicationt is tamogatja. a szamitast vegzo compute() metodusa a background threadben hivodik. amennyiben a BackGroundTask a FutureTask-on alapul, az a cancelt is egyszerusiti; a thread interrupt status pollozasa helyett a compute() hivhatja a Future.isCancelled()-et
+(hosszabb peldakod, nem irom le)
+
+[[[9.3.3. SwingWorker]]]
+ami csinaltunk az lenyegeben egy kis fw FutureTask es Executor segitsegevel, ami background threadekben execeli a hosszabb taskokat, igy nem rontja a GUI respet. ezek a technikak bmely single threaded GUI fwben mukodnek, nem csak a Swingben. Swingben az itt bemutatott technikak egy resze impl van a SwingWorker classban: cancel, completion notif, progress ind
+
+[[9.4. SHARED DATA MODELS]]
+Swing presentation objk, beleertve data model objket mint pl. TableModel, TreeModel, confinalva vannak az event threadbe. egyszeru GUI prgkban minden mutable state a presentation objkban van, es az event threaden kivul csak main thread van. ezekben egyszeru a single threaded enforcolasa: ne accessaljuk a data modelt es a presentation componenteket a main threadbol. osszetettebb prgk hasznalhatnak mas threadeket is arra h datat mozgassanak egy persistent tarolobol/ba, igy megorizve a respet
+
+legegyszerubb esetben a data modelben levo datat a user irja be v statically loaded vmilyen data sourcebol az app startupkor, ebben az esetben csak az event thread nyul hozza, mas thread nem. de neha a presentation model obj csak egy view egy masik data sourcera, pl. DB, filesys, remote service; ilyenkor valszeg tobb thread is hozzanyul a datahoz ahogy az ki/be megy az appbol
+pl. tree control segitsegevel akarjuk displayelni egy remote filesys tartalmat. nem akarjuk enumeralni az egesz filesyst mielott displayelnenk, mert az tul sok idobe/membe kerulne. helyette a tree lazily populalhato ahogy a nodeok expandolodnak. egy remote tarolon levo egyetlen dir enumeralasa is sokaig tarthat, ezert az enumeralast background taskban celszeru. ha a background task completel akkor a datat vhogy be kell jutattni a tree modelbe. ez tortenhet egy threadsafe tree modellel, "bepusholjuk" a datat a background taskbol az event threadbe ugy h invokeLater()-el submittolunk egy taskot, v az event thread pollozza h a data mar hferheto-e
+
+[[[9.4.1. Thread-safe Data Models]]]
+amig a blocking nem befolyasolja a respet, egy threadsafe data modellel megoldhato a problema h tobb thread nyul a datahoz. ha a data model fine grained concot tamogat, akkor az event thread es a background threadek sharelni tudjak resp problemak nelkul. ld. pl. 4.3.1 DelegatingVehicleTracker ahol az underlying ConcurrentHashMap retrieval operjei nagyfoku conct biztositanak. hatrany h nem ad cons snapshotot a datarol, ami lehet h kovetelmeny. threadsafe data modeleknek eventeket kell generalniuk amikor a model updatelodik, h a viewk updatelodni tudjanak data change eseten
+
+neha lehetseges thread safetyt, const es jo respet elerni versioned data model segitsegevel, mint pl. CopyOnWriteArrayList. ha egy copy-on-write collra kerunk iteratort, az az iter krealaskori allapotaban traversal a collon. de a copy-on-write collok csakkor jo perf, ha a traversalok szama joval nagyobb a modifokenal, ami egy vehicle tracking appnal valszeg nem igy van. a legtobb spec versioned data structure meg tudja kerulni ezt a megkotest, de nem egyszeru olyan versioned data structuret kesziteni ami hatekony conc accesst is nyujt es nem orzi meg a data regebbi versionjeit a szuksegesnel hosszabb ideig
+
+[[[9.4.2. Split Data Models]]]
+GUI szempontjabol a Swing table classok mint TableModel es TreeModel a hivatalos repok a displayelendo data szamara. de ezek a model objk gyakran maguk is az app altal managelt mas objk "viewjai". ha egy prgnak presentation domain es app domain data modelje is van, az un. split model design
+
+split model designban a presentation model az event threadbe confinalva; a masik model az un shared model threadsafe, es az event threadbol es az app threadekbol is accessalhato. a presentation model listenereket registral a shared modelbe, h notifyokat kapjon az updatekrol. a presentation model updatelheto a shared modelbol, ugy h az update msgbe embeddelve van a relevant state egy snapshotja v a presentation model direktben retrievelheti a datat a shared modelbol amikor update eventet kap
+
+a snapshot approach egyszeru de vannak limitjei. jol muk ha a data model kicsi, nem gyakoriak az updatek es a ket model strukturaja hasonlo. ha a data model nagy v gyakoriak az updatek v a split egyik/mindket oldala olyan infot tart ami a masik oldal szamara nem visible, akkor hatekonyabb lehet teljes snapshotok helyett inkrementalis updateket kuldeni. ezzel az approachal serializalhatok a shared model updatejei, es rekrealhatok az event threadben a presentation modelen. az inkr updatek masik elonye h a valtozasokrol szolo finer grained info javithatja a display qualityt, pl. ha csak egy vehicle move van akkor nem kell az egesz displayt repaintelni csak az adott regiont
+
+split model akkor javasolt ha a data modelt tobb mint egy thread kozott kell sharelni, es a threadsafe model nem javasolt blocking, cons vagy complexity okokbol
+
+[[9.5. OTHER FORMS OF SINGLE-THREADED SUBSYSTEMS]]
+thread confinement nem csak GUIkban lehet, hanem bmilyen single threaded subsysben. neha olyan okokbol van raeroltetve a developerre aminek nincs koze a sync/DLhez, pl. egyes native libek megkovetelik h minden access uabbol a threadbol jojjon, meg a System.loadLibrary() is
+
+a GUI fwkben hasznalt approachoz hasonloan konnyen krealhato sajat dedicated thread v single threaded executor, amivel accessalni lehet a native libet, es providolni egy proxy objectet amellyel interceptolni tudjuk a thread confined objnak kuldott hivasokat, es taskkent submittolni oket a dedicated threadnek. Future es newSingleThreadExecutor segitsegevel ez egyszeru; a proxy metodus submit()-olhatja a taskot es rogton meghivhatja Future.get()-et az eredmenyre varva (ha a threadbe confinalt class ifacet impl, akkor automatizalhatjuk is ugy h minden metodus Callablet submitol egy background thread executornak es dyn proxyk segitsegevel var az eredmenyre)
