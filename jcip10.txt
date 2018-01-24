@@ -1,0 +1,135 @@
+Chapter 10. Avoiding Liveness Hazards
+
+safety es lives kozott gyakran ellentet van. lockolunk a threadsafety erdekeben, de a nem megfelelo lock ordering DL-t is okozhat. thread poolokat es semaphoreokat hasznalunk h boundoljuk a rsc felhasznalast de ha nem ertjuk az activityket az rsc DL-t okozhat. java appok nem recoverelnek DL-bol ezert megeri ugy designolni h elkeruljuk
+
+[[10.1. DEADLOCK]]
+dining philosophers: 5 ember koralaku asztalnal, kozottuk 5 db evoeszkoz. az emberek felvaltva gondolkodnak es esznek. eveshez 2 db evoeszkoz kell. vannak algok amikkel mindenki tud kb rendszeresen enni (ember megprobalja mindket evoeszkozt felvenni, de ha nem sikerul, akkor leteszi azt amelyiket felvette, es var vmennyit amig ujra megprobalja) es olyanok is amelyiknel nehanyan ehen halnak (mindenki azonnal felveszi a balra eso evoeszkozt es varja h a jobb oldali is hferheto lesz, addig nem teszi le). az utobbi eset DL: ahol mindenkinel van egy olyan rsc ami masnak is kell, es var egy olyan rscra amit masvalaki tart, es nem teszi le a nala levo rsct amig fel nem tudja venni azt amire szuksege van
+
+ha egy thread oroke tart egy lockot, akkor azok a threadek amelyek probalnak acquirelni azt a lockot, orokre varni fognak. ha A thread tartja L lockot es acquirelni szeretne M lockot, B thread pedig tartja M lockot es acquirelni szeretne L lockot, akkor mindket thread orokre varni fog. ez a DL (deadly embrace) legegyszerubb formaja ahol tobb thread var orokke cyclic locking dependency miatt (threadek egy iranyitott graf nodejai, az elek pedig "A thread var a B thread altal tartott rscre". ha ez a graf ciklikus akkor DL van)
+
+DB syseket ugy designoljak h detectaljak a DL-t es recovereljenek belole. egy tranzakcio tobb lockot acquirelhet es mindegyiket tartja amig nem commitol. emiatt nem ritka h ket tr DL-ba kerul. beavatkozas nelkul orokke varnanak (mikozben olyan lockokat tartanak mikre mas trknak is szuksege lehet). de a DB server ezt nem engedi, ha detektalja h trk egy setje DLben van (csekkeli h az is-waiting-for grafban van-e kor), akkor kipickel egy trt es abortalja, ezaltal releaselodnek a tr altal tartott lockok, es a tobbi tr haladhat tovabb. az app ezutan retryolhatja az aborted trt, ami most mar sikerulhet mivel a competing trk kozben completeltek
+
+JVM nem kezeli ilyen jol a DL-ket. ha threadek egy setje DL-ben van, akkor azok a threadek elvesztek. fuggoen attol h ezek a threadek mit csinaltak, az app teljesen megallhat v egy subsysje allhat meg v perf--. az egyetlen mo az app restart
+
+mint a cocn hazardok tobbsege, a DLk ritkan latszanak meg azonnal. abbol h egy classban lehet DL, nem kov h lesz is. DLk alt a legrosszabkor, heavy prod load mellett jelentkeznek
+
+[[[10.1.1. Lock-ordering Deadlocks]]]
+public class LeftRightDeadlock {
+  private final Object left = new Object(); private final Object right = new Object();
+  public void leftRight() { synchronized(left) { synchronized(right) { doSomething();
+  public void rightLeft() { synchronized(right) { synchronized(left) { doSomethingElse();
+ha egy thread az egyik metodust egy masik thread a masik metodust hivja, es az actionjeik osszeakadnak, akkor DL
+A: lock left, B: lock right, A: try to lock right, B: try to lock left => mindketto orokke var
+
+DL oka h a ket thread uazokat a lockokat mas sorrendben probalta acquirelni. ha uabban a sorrendben probaltak volna, akkor nem lett volna cyclic locking dep es DL. ha garantalni tudjuk h minden thread aminek egy idoben van szuksege L es M lockokra, mindig uabban a sorrendben acquireli oket, akkor nem lesz DL
+prgban nem lesz lock-ordering DL ha minden thread egy fixed global order szerint acquireli a lockokat amire szuksege van
+
+cons lock ordering ellenorzese az egesz prg global csekkeleset igenyli. nem eleg azokat a code pathokat onmagukban csekkelni amelyek tobb lockot acquirelnek: onmagaban a leftRight() es a rightLeft() is teljesen korrekt modja a lock acquirelesnek, csak nem kompat egymassal. lockolasnal a bal keznek tudnia kell mit csinal a jobb
+
+[[[10.1.2. Dynamic Lock Order Deadlocks]]]
+neha nem nyilvanvalo h van-e eleg controlunk a lock ordering folott h preventaljuk a DL-eket
+public void transferMoney(Account from, Account to, Amount amount) {
+  synchronized(from) { synchronized(to) { 
+    if(from.getBalance() < amount) throw new InsufficientFundsException();
+	else { from.debit(amount); to.credit(amount);
+acquireli a lockokat mindket Account objra mielott execelne a transfert, atomically updateli a balancet, es nem violalja az invariantokat mint pl. h account balance nem lehet < 0
+megis DL lehet, mert a lock order az atadott argok orderjetol fugg, amik external inputok, es ha ket thread egy idoben hivja meg a metodust, es forditott iranyban akarnak ket szamla kozott transferalni. A: transferMoney(acc1, acc2, 10), B: transferMoney(acc2, acc1, 20). szerencsetlen idozitesnel A acquireli acc1 lockjat es var acc2 lockjara, mikozben B tartja acc2 lockjat es var acc1 lockjara
+
+tehat figyeljunk a nested lock acqokra. mivel az argok orderje a controlunkon kivul van, ezert induce-olnunk (ravesz?) kell egy lock orderinget, es az egesz appban cons eszerint acqolni oket
+
+induce egy modja a System.identityHashCode(), ami az Object.hashCode() altal returnolt valuet returnoli
+private static final Object tieLock = new Object();
+public void transferMoney(Account from, Account to, Amount amount) {
+  class Helper { public void transfer() { ... //inner class, ennek torzseben van a fenti transfer logika
+  int fromHash = System.identityHashCode(from); int toHash = System.identityHashCode(to);
+  if( fromhash < toHash ) { synchronized(from) { synchronized(to) { new Helper().transfer(); } }
+  else if( fromhash > toHash ) { synchronized(to) { synchronized(from) { new Helper().transfer(); } }
+  else { synchronized(tieLock) { synchronized(from) { synchronized(to) { new Helper().transfer();
+ha ket objnak azonos hashcodeja lenne, akkor arbitrary modon kell orderelnunk a lock acqokat, ami megint behozhatja a DL-t. h preventaljuk az incons lock orderinget, ekkor egy harmadik, tie breaking lockot haszn. ezt acqoljuk mielott bmelyik Account lockot acqolnank, igy biztositjuk h egyszerre csak egy thread probalja arbitrary modon acqolni a ket lockot, ezzel eliminaljuk a DL lehetoseget (amennyiben ezt a mecht cons hasznaljuk). ha hash collision gyakori, akkor ez conc bottleneck is lehetne (uugy mintha egyetlen prgszintu lockot hasznalnank), de mivel System.identityHashCode()-nal ritkak a hash collisionok, ez biztositja a safetyt
+ha az Accountnak unique, immut, comparable keye van, pl. acc nr, akkor lehet a keyek szerint is orderelni az objkat, nem kell tie breaking lock
+
+ugy tunhet a DL nem akkora problema mert a lockokat alt csak rovid ideig tartjak a threadek, de egy prod app naponta lock acq-release parok millioit hajthatja vegre, es ebbol eleg ha csak egy DL-be viszi az appot. meg alapos load testing sem mindig tudja felderiteni oket (epp az neheziti a felderitesuket h a lockokat csak rovid ideig tartjak, a contention elkerules erdekeben)
+(peldaprg ami gyorsan kihozza a transferMoney()-ban rejlo DL-t)
+
+[[[10.1.3. Deadlocks Between Cooperating Objects]]]
+multiple lock alt nem olyan egyszeru mint az eddigi peldakban; alt nem uaz a metodus acqolja a lockokat
+class Taxi {
+  private Point location, destination; private final Dispatcher dispatcher;
+  public synchronized Point getLocation() { return location;
+  public synchronized void setLocation(Point location) { this.location = location; if(location.equals(destination)) dispatcher.notifyAvailable(this);
+class Dispatcher {
+  private final Set  <Taxi> taxis; private final Set<Taxi> availableTaxis;
+  public synchronized void notifyAvailable(Taxi taxi) { availableTaxis.add(taxi);
+  public synchronized Image getImage() { Image image = new Image(); for(Taxi t:taxis) image.drawMarker(t.getLocation()); return image;
+  
+nincs olyan metodus ami expliciten acqolna ket lockot, de a setLocation() es getImage() hivoi acqolhatnak kettot. ha egy thread setLocation()-t hiv, akkor eloszor updateli a locationt aztan pedig csekkeli h elerte-e a destinationjet. ha igen akkor notifyolja a dispatchert h uj destinationra van szuksege. mivel a setLocation() es a notifyAvailable()  is sync, ezert a setLocation()-t hivo thread acqolja a Taxi lockot es aztan a Dispatcher lockot. hasonloan egy thread ami a getImage()-t hivja, eloszor acqolja a Dispatcher lockot es utana egyenkent a Taxi lockokat. tehat ket thread acqol ket lockot kulonbozo orderben, ami DL risk
+itt nem olyan egyszeru kiszurni a DL lehetoseget mint eddig; ami figyelmeztethet az h egy alien metodust (ld.korabban) hivunk mikozben lockot tartunk. az alien metodus mas lockokat acqolhat, ami DL risk, v hosszu ideig blokkolhat es ezaltal azok a threadek is blokkolodhatnak amiknek az altalunk tartott lockra lenne szuksege
+  
+[[[10.1.4. Open Calls]]]
+Taxi es Dispatcher nem tudtak h ok egy lehetseges DL ket oldala; nem is kellett tudniuk mert egy metodushivas egy abstraction barrier ami elshieldeli annak a detailjeit h mi tortenik a masik oldalon. de mivel nem tudjuk h mi tortenik a masik oldalon, ezert meghivni egy alient metodust, mikozben lockot tartunk, nehez analizalni es ezert kockazatos
+
+ha ugy hivunk metodust h nem tartunk lockot, un. open call; az olyan classok amik open callokon relyolnak, jobb behavjuak es composolhatoak mint azok a classok amik lockot tartva csinalnak hivasokat. open callok hasznalata DL elkerulese erdekeben ~ encaps hasznalata thread safety erdekeben: bar encaps nelkul is lehet threadsafe prgot irni, encapsot hasznalo prg analizise egyszerubb. hasonloan egyszerubb egy olyan prg liveness analizise amiben csak open callok vannak. ha csak open callokat haszn, akkor egyszerubb azonositani a code pathokat amik tobb lockot acqolnak, es egyszerubb biztsoitani h a lockok cons orderben legyenek acqolva (sync objectek composolasa vs composed objok syncelese (utobbi a jobb??))
+
+refaktoras open callokra
+public void setLocation(Point location) { boolean reachedDestination; synchronized(this) { this.location = location; reachedDestination = location.equals(destination); } if(reachedDestination) dispatcher.notifyAvailable(this);
+public Image getImage() { Set<Taxi> copy; synchronized(this) { copy = new HashSet<>(taxis); } Image image = new Image(); for(Taxi t: copy) image.DrawMarker(t.getLocation()); return image;
+sync blokkok csak a shared statet tartalmazo opereket guardoljak (ez a scalabilityt is javithatja, ld. 11.4.1). gyakran a problemak oka az h a kompaktabb syntax erdekeben az egesz metodust syncce teszik holott nem lenne szukseges
+
+torekedjunk az open callok hasznalatara; az ilyen prgkban sokkal egyszerubb DLt keresni mint az olyanokban ahol tartott lockok mellett alian metodushivasok vannak
+
+sync blokkok open callok erdekeben valo restrukturalasanak lehetnek mellekhatasai mert atomic opert nonatomicca tesz. ez gyakran elfogadhato, pl. taxi location update es a dispatcher notifyolasa nem kell atomic legyen. mas esetekben az atomicity elvesztese szembetuno, de elfogadhato: a DL verzioban getImage() az osszes locationrol egy idoben kesziti a snapshotot; a refactorolt verzioban minden taxi locationjet kulonbozo idopontban fetcheli ki
+
+neha az atomicity elvesztese problema, es gondoskodni kell az atomicity elereserol. pl. egy conc objt ugy strukturaljunk meg h az open call utani code patht csak eggy thread execelhesse. pl. service shutdownkor varni akarunk az in-progress operek completelesere, es aztan releaselni a service altal hasznalt rscket. ha tartjuk a service lockot mikozben az operek completelesere varunk az DL risk; de ha service shutdown elott releaseljuk a service lockot, akkor mas threadek uj opereket indithatnak el. a mo h csak addig kell megtartani a lockot h a service statet "shutting down"-ba allitsuk, es igy mas threadek mar ne probaljanak meg uj opert inditani. aztan mar varhatunk a shutdown befejezodesere, tudva h az open call utan mar csak a shutdown thread accessalhatja a service statet. igy tehat nem lockingot hasznalunk arra h mas threadeket kivul tartsunk a kritikus kodreszeken, hanem olyan protokolt csinalunk h mas threadek ne is probaljanak bejutni
+
+[[[10.1.5. Resource Deadlocks]]]
+threadek rscre varas kozben is DL-hatnak. pl. van ket pooled rsc, pl. conn pool ket kulonbozo DB-hez. rsc poolok alt semaphore-al impl, h blokkoljanak amikor a pool ures. ha egy task mindket DB-hez connt ker, de a ket rsc nem mindig uabban az orderben van kerve, akkor lehet h A thread tartja a connt D1 DB-hez mikozben connra var D2-hez, B thread pedig tartja a connt D2-hoz mikozbenconnra var D1-hez (minel nagyobb a pool, ez annal kevesbe valoszinu; ha minden poolban N conn van, akkor a DL-hez N setnyi ciklikusan varo thread kell, es nagyon balszerencses timing)
+
+rsc Dl masik formaja a thread starvation DL. 8.1.1-ben lattuk ahol egy single threaded executorban futo task submittol egy masik taskot es varja annak az eredmenyet. ekkor az elso task orokke varni fog, megallitva ezzel minden mas taskot is ami abban ez executorban futna. thread starv DL forrasai alt az olyan taskok amielyek mas taskok eredmenyere varnak; bounded poolok es dependent taskok nem jo kombinacio
+
+[[10.2. AVOIDING AND DIAGNOSING DEADLOCKS]]
+olyan prgban nem lehet lock ordering DL ami sosem acqol egyszerre tobb mint egy lockot. ha megis szukseges tobb lockot acqolni akkor a design soran figyelni a lock orderingre: locking interactionok minimalizalasa, lock-ordering protocol kovetese es ledokumentalasa
+
+fine grained lockingot hasznalo prgknal ket lepcsos code audit: eloszor azonositsuk hol lehet tobb lock acqolva (lehetoleg minel kevesebb helyen) aztan global analizis ezekre biztositando h a lock ordering cons az egesz prgban. egyszerusiti ezt ha mindenhol open callokat hasznalunk ahol lehetseges; code review v autom source code/bytecode analizis is egyszerubb
+
+[[[10.2.1. Timed Lock Attempts]]]
+Dl detect es recover masik modja a Lock class tryLock() metodusa (ld 13). mig az intrinsic locknal orokre varunk ha nem tudjuk acqolni a lockot, az explicit lockoknal megadhato egy timeout ami utan a tryLock() failuret returnol. ha hosszabb timeoutot allitunk be mint amennyi idot varhatoan a lock acq igenyel, akkor vissza tudjuk venni a controlt ha vmi varatlan tortenik (ld. 13.1.1 transferMoney() impl tryLock()-al)
+
+ha timed lock attempt failel, nem biztos h tudjuk miert. lehet h DL volt, lehet h thread belepett egy vegtelen ciklusba mikozben lockot tartott, lehet h egy activity csak lenyegesen lassabban fut mint varnank. de legalabb van lehetoseg h loggoljunk, es vmivel more graceful modon restartoljuk mintha le kellene loni az egesz processt
+
+ha tobb lockot acqolunk timed lockkal, az hatekony lehet DL ellen meg akor is ha nem hasznaljuk a timed lockot cons az egesz prgban. ha lock acq timeoutol, akkor releaselhetjuk a lockokat, varhatunk es aztan retryolhatunk, ami alatt a DL condition lehet h megszunt as a prg recoverelt (ez csakkor muk ha a ket lock egyutt van acqolva; ha nested metodushivasok miatt van, akkor nem tudjuk csak ugy releaselni az outer lockot (?))
+
+[[[10.2.2. Deadlock Analysis with Thread Dumps]]]
+fo cel a DL preventalas; ha megis megtortenik akkor JVM thread dump segitsegevel lehet azonositani. thread dump tart egy stacktracet minden futo threadhez, ami hasonlo az exchez tartozo stacktracehez. van benne locking info is, pl az egyes threadek milyen lockokat tartanak, azok milyen stackframeben lettek acqolva, blocked thread milyen lock acqjara var (ez akkor is hasznos info ha nincs DL; thread dump periodikus triggerelesevel kovetni lehet a prg locking behavjat). thread dump generalas elott a JVM koroket keres az is-waiting-for grafban DL-k utan kutatva. ha talal akkor jelzi h mely lockok es threadek vannak erintve es hol vannak a prgban a lock acqok
+
+thread dump triggereleshez unixban SIGQUIT (kill -3) signalt kuldunk a JVM processnek vagy CTRL+\ unixban vagy CTRL+Break windowsban. IDEk is tudnak thread dumpot kerni
+explicit Lockokra Java 6-tol van thread dump support es DL detectionm de az info h hol vannak a Lockok acqolva kevesbe preciz mint intrinsic lockoknal. intrinsic lockoknal megvan a stackframe amiben acqolva lettek, explicit Lockoknal csak az acqolo thread
+
+(DL pelda printout)
+a peldaban hasznalt JDBC driverben lock-ordering bug: kulonbozo call chainek klf orderben acqolnak tobb lockot. ez onmagaban meg nem jott volna elo, de emellett tobb thread probalta egyidejuleg hasznalni uazt a JDBC connt, amire a developerek nem szamitottak. JDBC spec nem koveteli meg h Connection threadsafe legyen, es gyakran single threadbe confinelik a Connectiont, mint itt is akartak. a vendor threadsafe JDBC drivert szeretett volna csinalni, de mivel a lock orderingre nem figyeltek, a driver DL prone lett; es a driver es az app altal vegzett nem megfelelo Connection sharing interactionja hozta felszinre a problemat. isolationban a ket bug egyike sem jott ki a testingen
+
+[[10.3. OTHER LIVENESS HAZARDS]]
+DL a leggyakoribb liveness hazard, de vannak masok is: starvation, missed signals (ld. 14.2.3), livelock
+
+[[[10.3.1. Starvation]]]
+ha egy thread folyamatosan nem tudja accessalni azokat a rscket amik a progresshez szusegesek lennenek; leggyakrabban CPU cycleket. Java appokban pl. thread priok nem megfelelo hasznalata okozhatja. masik ok lehet lock tartasa nonterminating szerkezetek hasznalata mellett (infinite loop v nonterminating rsc wait) mert ekkor mas threadek nem tudjak acqolni a lockot
+
+Thread APIben definialt thread priok csak scheduling hintek. az API 10 prio levelt def, amiket a JVM OS scheduling priokra mappelhet tetszes szerint. a mapping platform-spec, tehat ket kulonbozo Java prio az egyik sysben mappelodhet uarra az OS priora, egy masik sysben viszont ket kulonbozo OS priora. egyes OS-ekben nincs is 10 kulonbozo prio level
+
+OS schedulerek a JLS altal megkovetelt szintnel sokkal jobban torekszenek a scheduling fairnessre es livenessre. legtobb Java appban minden app threadnek Thread.NORM_PRIORITY a prioja. thread prio mech nem tul szerencses; nem mindig egyertelmu h prio valtoztatasnak mi lesz a hatasa, lehet h semmi, de az is lehet h starvationt okoz majd
+alt jobb ha nem tweakeljuk a thread priokat. ha megtesszuk onnan az app behavje platform-spec lesz, es starvation risk lep fel. gyakran lathato h prgok a prio tweaking okozta problemakbol varatlan helyeken kiadott Thread.sleep() es Thread.yield() hivasokkal probalnak kijonni, igy probalva tobb idot bizt lower prio threadeknek (Thread.yield() es Thread.sleep(0) semanticsje nincs def JLSben; JVM implhatja oket noopokent v kezelheti scheduling hintekkent. NEM kovetelmeny h megfeleljenek a unix sleep(0) semanticsnek: tedd a current threadedet az adott prio run queujanak vegere, ezzel yieldelve az azonos prioju tobbi thread javara; bar egyes JVM-ek igy impl yield()-et)
+keruljuk a thread priok hasznalatat, mert platform dep++ es liveness problemakat okozhatnak. legtobb conc app hasznalhatja a default thread priot minden threadre
+
+[[[10.3.2. Poor Responsiveness]]]
+background threadeket hasznalo GUI appokban nem ritka. 9-ben irtunk egy is fwt ami a hosszan futo taskokat offloadolta background threadekbe h UI ne fagyjon le. CPU-intenziv bg taskok is affectalhatjak a respet, mert versenyeznek a CPU ciklusokert az event threaddel: ez egy olyan eset ahol a thread prio valtasnak lehet ertelme. ha a threadek altal vegzett work tenyleg bg jellegu, akkor a priojuk csokkentese resp++ teheti a foreground taskot
+
+rossz lock mgmt is okozhat rossz respet. ha thread sokaig tart egy lockot (pl nagy collon iteral es mindegyik elemen sok munkat vegez) akkor mas threadeknek amelyek accessalni szeretnek a collt sokaig kell varniuk
+
+[[[10.3.3. Livelock]]]
+thread nem blocked, de nem tud haladni mert retryol egy opert ami mindig failel. transactional msging appokban gyakori, ahol a msg infrastr rollbackel egy trt ha egy msg nem feldolgozhato, es visszateszi a queue headbe. ha egy adott msgtypera bug van msg handlerben, akkor minden feldolgozasi kiserletnel tr rollback lesz. mivel a msg a queue headre kerul vissza, a handler ujra es ujra meghivodik es elfailel (un poison msg problema). a msg handling thread nem blocked de nem is halad elore. ezt a fajta livelockot gyakran tulbuzgo error-recovery kod okozza, ami unrecoverable errort recoverablekent probal kezelni
+
+livelock akkor is lehet ha tobb kooperalo thread ugy valtoztatja a statejet, valaszkent a tobbiekre, h vegeredmenyben egyik thread sem tud haladni (~ udvarias emberek probalnak kiterni egymas utjabol a keskeny folyoson)
+mo randomness bevezetese a retry mechba. pl. ha egy ethernet nw ket allomasa probal packetet kuldeni a shared carrierre, akkor utkozes lesz. az allomasok ezt detektaljak es kesobb mindketto megprobalja ujrakuldeni a packetjet. ha mindketto pontosan 1 sec-el kesobb probalja ujra akkor ujra es ujra utkozes lesz, es vegul egyik csomag se megy ki, meg ha sok bandwidth van is. ezert a varakozasi idoben legyen vmi random. ethernet protocolban ismetelt utkozesek utan backoff is van. random waitekkel torteno retry es backoffok hatekonyak lehetnek conc appokban a livelock elkerulesere
+
+
+
+
