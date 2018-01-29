@@ -1,0 +1,234 @@
+Chapter 11. Performance and Scalability
+
+threadek hasznalatanak egyik fo celja a perf++ (sokak szerint ez az egyetlen cel, tekintve a threadek altal okozott complexityt). threadek hasznalata javithatja a rsc hasznalatot mert az appok konnyebben kihasznalhatjak a rendelkezesre allo processing capacityt; es javithatja a respet azaltal h az appok el tudnak kezdeni uj taskokat processalni mikozben existing taskok meg mindig futnak
+
+conc prgk perfjanak analizalasat, monitoringjat es improvolasat fogjuk nezni. sajnos a perf improvolo technikak jo resze noveli a complexityt, es a safety/liveness failurek vget is. egyesek egy bizonyos perf problemat tradeoffolnak egy masikert. perf++ kivanatos, de a safety fontosabb. prg eloszor legyen jo es csak utana gyors; es csakkor ha a perf requirementek megkivanjak. conc appoknal a perf optimalizalas gyakran az utolso szempont
+
+[[11.1. THINKING ABOUT PERFORMANCE]]
+perf++: tobb work kevesebb rscvel. rsc lehet CPU cycle, mem, nw bandwith, IO bandwidth, DB reqek, disk space stb. ha egy activity perfjet egy rsc availabilityje limitalja, akkor azt mondjuk h a rsc boundolja: CPU-bound, DB-bound stb
+
+cel lehet az overall perf++, de tobb thread mindig okoz vmi perf costot a single threadedhez kepest. pl. thread koord okozta overhead (locking, signaling, mem sync), context switching++, thread krealas/teardown, scheduling overhead. ha a threading hatekony, akkor ez megterul throughput++, resp++, capac++ formajaban. rosszul designolt conc app viszont meg gyengebb perf lehet mint egy seq app (pl. tunable thread poolt hasznalo app sys testingje kimutatta h az opt pool size 1. aminek mar az elejen nyilvanvalonak kellett vona lennie mert target sys single CPU, az app pedig teljesen CPU-bound volt)
+
+perf++ erdekeben alkalmazott conc hasznalatkor 1 probaljuk effectivebben kihaszn a processing rscket 2 probaljuk kihasznalni a szabadda valo additional processing rscket. perf monitoring szemszogbol ez azt jelenti h minel busybbnek szeretnenk latni a CPUt (persze ez useful workre vonatkozik). ha a prg compute-bound akkor tobb proc hozzaadasa capac++ lehet; de ha meg a meglevo procokat sem tudjuk kihaszn akkor tobb proc hozzaadasa hatastalan. threading egy lehetoseget nyujt a CPUk jobb kihasznalasara, decomposoljuk az appot ugy, h a szabad procok szamara mindig legyen work
+
+[[[11.1.1. Performance Versus Scalability]]]
+app perf tobbfele modon merheto: service time, latency, throughput, efficiency, scalability, capacity. nehany ezek kozul (service time, latency) "how fast" processalhato v ackolhato egy adott unit of work; masok (capacity, throughput) "how much" work vegezheto el adott mennyisegu computing rscvel
+
+scalability: ability to improve throughput or capacity when additional computing rscs (CPU, mem, storage, IO bandwidth) added
+
+appok scalabilityre valo designolasa es tuneolasa nagyon kulonbozhet a hagyomanyos perf optimizalastol. perf tuning celja alt "same work less effort", pl. elozoleg kiszamolt eredmenyek felhasznalasa cachinggel v O(n2) algo lecserelese O(nlogn)-re. scalabilityre optimalizalasnal a problemat probaljuk parhuzamositani h additional processing rscket ki tudjuk hasznalni, "more work with more rsc"
+
+"how fast" es "how much" teljesen elkulonulnek es neha egymassal ellentetesek is. scal++ v jobb hw kihasznalas erdekeben gyakran _novelnunk_ kell az egy individual task processalasahoz szukseges workot, pl. amikor a taskot tobb "pipelined" subtaskra osztjuk. sajnos a single threaded prgkban hasznalt perf++ trukkok nagy resze scalabilityhez nem jo (ld. 11.4.4)
+
+3-tier app model (pres, business, pers separated, kulon sysben is lehetnek) illusztralja h scal++ perf-- okozhat. monolit app ahol a pres, business es pers osszeer, szinte biztosan jobb perft nyujt az elso unit of workre mint egy tobb sysen distributalt multitier app. hiszen nincsen a tierek kozti nw latency, se nem kell a computation kulon abstract layerekbe valo szetvalasztasanak ktgeit megfizetni (queueing overhead, coord overhead, data copy)
+de amikor a monolit sys eleri a processing capacjat, akkor nehez lehet tovabb novelni. ezert gyakran elfogadjuk a unitonkenti hosszabb service timeot v tobb felhasznalt rsct azert h az app nagyobb load kezelesere jobban scal legyen
+
+server appoknal a "how much" (scal, throughput, capac) altalaban fontosabb mint "how fast" (az interaktiv appoknal fontos a latency h usereknek ne kelljen progress indre varniuk). most foleg a scalra fokuszalunk, nem a raw single threaded perfre
+
+[[[11.1.2. Evaluating Performance Tradeoffs]]]
+szinte minden dontes vmilyen tradeoffal jar, es gyakran nincs eleg info. pl. a quicksort algo jo nagy datasetekhez, a bubblesort viszont a kis datasetekhez. ha a feladat az h impl egy hatekony sortot akkor tudnunk kell vmit a dataset mereterol, vmint h avg-case timera, worst-case timera v predictabilityre optimalizalunk; ez pedig gyakran nincs leirva a reqk kozott. emiatt van h a legtobb opt premature, mert meg azelott megcsinaljak mielott lenne egy clear set of req. keruljuk a premature optot: "first make it right then make it fast - if it is not already fast enough"
+
+donteseknel gyakran a cost egy formajat csereljuk masikra (service time vs mem consumption), neha costot csereljuk safetyert. perf opt ara gyakran a readability/maintainability; minel "okosabb" a kod, annal nehezebben ertheto es karbantarthato. opt neha megserti az OO design principleket, pl. encaps breaking; neha nagyobb error risk, mert a gyorsabb algo komplikaltabb
+
+legtobb perf dontes sokvaltozos es erosen szituaciofuggo. kerdesek amiket tegyunk fel
+- mi az h "gyorsabb"?
+- milyen feltetelek mellett lesz ez az approach tenylegesen gyorsabb? light v heavy load? kicsi v nagy dataset? van ezekrol bmilyen meres?
+- milyen gyakran allnak elo ezek a feltetelek? van ezekrol bmilyen meres?
+- fogjuk a kodot mas feltetelek mellett is haszn?
+- milyen hidden costok, pl. dev v maint risk lehet a perf++ ara? ez jo tradeoff?
+ezek minden perf-related dontesre von, nem csak conc esetben. miert ajanlott ennyire konzervativan hozzaallni az opthoz? mert a perf hajszolasa valszeg a conc bugok legfobb forrasa. a hiedelem h a sync "tul lassu" vezetett sok veszelyes sync-- celzo otlethez (ld. 16.2.4 double checked locking), es alt ezzel okoljak meg h miert nem kovetik a sync szabalyait. de mivel a conc bugok nagyon nehezen lenyomozhatoak, mindent nagyon komolyan kell venni ami ilyesmit okozhat
+
+amikor safetyt tradelunk perfert lehet h egyiket se erjuk el. foleg conc esetben sok developer nem talalja el intuitiven h hol van perf problema v melyik approach lehet gyorsabb v more scalable. ezert minden perf tuninghoz konkret perf reqk kellenek (tudni kell h mikor kell tuneolni es mikor kell abbahagyni) es egy mero prg realisztikus configgal es load profillal. tuning utan ujra kell merni h elertuk-e a celt. az opttal jaro safety es maint riskek mar onmagukban is rosszak, es nyilvan nem akarjuk megfizetni oket ha meg se kapjuk erte a benefitet. "measure don't guess"
+
+[[11.2. AMDAHL'S LAW]]
+egyes problemak gyorsabban oldhatok meg tobb rscvel (pl. tobb munkas, gyorsabb aratas). mas taskok alapvetoen serialok (a novenyek nem fognak gyorsabban noni, bmennyi munkast vetunk be). ha a thread hasznalat fo oka h ki akarjuk haszn a tobb procot, akkor a problema is legyen parallel decomposolhato
+
+legtobb conc prg serial es parhuzamosithato reszek kevereke. Amdahl tv: additional computing rsck hozzaadasaval a prg elmeletben mennyire gyorsaithato fel, a parhuzamosithato es a serial reszek aranyabol kiindulva. ha F a szamitas azon resze amit serial kell vegezni, akkor N procos sysben: speedup <= 1 / (F + (1-F)/N)
+ahogy N tart vegtelenhez, a max speedup tart 1/F-hez, vagyis egy prg ahol a processing fele serial kell legyen, az max 2xesen gyorsithato fel, fgtl h mennyi procunk van, mig ahol csak a processing 10%-a kell serial legyen az a 10xesere. 10 proc mellett egy 10% serial prg max 5.3 speedupot erhet el (53% kihasznaltsaggal), 100 proc mellett pedig max 9.2 (9% kihasznaltsaggal). azaz eleg sok kihasznalatlan CPU van, es meg igy sem erjuk el a 10x-es factort
+
+6-ban azonositottuk a logical boundaryket amelyek menten az app taskokba decomposolhato. de h milyen speedup erheto el ha az app multiproc sysben fut, ahhoz azonositani kell a serialization sourceokat a taskokban
+
+public class WorkerThread extends Thread {
+  private final BlockingQueue<Runnable> queue;
+  public void run() { while(true) { try { Runnable task = queue.take(); task.run(); } catch(InterruptedException e) { break; //thread exitel} }}
+pl. app ahol N thread execeli ezt; shared work queuebol fetchelik a taskokat es execelik; tfh taskok nem dependalnak mas taskok eredmenyen v side effectjein. hogy fog ez scal ha procokat adunk hozza? elsore ugy tunik h az app parhuzamosithato: taskok nem varnak egymasra, es minel tobb proc van annal tobb task processalhato conc. de van egy serial resz is: task kifetchelese a work queuebol. a work queue a worker threadek kozott sharelve, es kell vmennyi sync h a conc access mellett megmaradjon az integrityje. ha a queue statejet lockinggal guardoljuk, akkor ha egy thread eppen dequeueol egy taskot, akkor mas threadeknek akik szinten dequeueolni akarnak a sajat taskjukat, varniuk kell; es ez az ahol a processing serializalodik
+
+egy task processing ideje nem csak a Runnable task execeleset jelenti, hanem a tasknak a shared work queuebol valo dequeuolasat is. ha a work queue LBQ, akkor a dequeueolas rovidebb ideig blokkolodhat mint sync LinkedList mellett, mert a LBQ egy more scalable algot haszn; de bmilyen shared data struct hasznalata serializationt jelent
+
+ez a pelda ignoral egy masik gyakori serialization okot, a result handlingot. minden computation vmilyen resultot v side effectet eredmenyez. mivel a Runnable-ben nincs explicit result handling, ezert ezeknek a taskoknak kell vmi side effectje legyen, pl. result logba v data structba irasa. a log fileok es egyeb containerek alt tobb worker thread kozt sharelve, ezert szinten serializationt okoznak. ha minden thread sajat data structuret haszn, es a resultok a vegen lesznek mergelve miutan minden task performed, akkor a merge lesz a serialization oka. minden conc appban van vmennyi serialization
+
+[[[11.2.1. Example: Serialization Hidden in Frameworks]]]
+thread++ melletti throughput valtozasokbol kovetkeztethetunk a prgban rejtetten jelen levo serializationre
+app amelyben tobb thread elemeket removol egy shared queuebol, hasonloan az elozo peldaprghoz. a processing step csak threadlocal szamitast tartalmaz. ha a thread uresen talalja a queuet, akkor rarak egy csomo uj elemet h a tobbi threadnek legyen mit removolnia. a shared queue access serializationt tartalmaz, de a processing step parhuzamosithato mert nincs benne shared data
+
+ket threadsafe Queue impl: 1 LinkedList wrapped with synchronizedList 2 ConcurrentLinkedQueue
+CLQ throughputja a threadek szamaval folyamatosan no amig el nem eri a CPUk szamat, onnantol kb konstans. a synchronized LL throughputja 3 threadig no, onnantol viszont csokken mert no a sync overhead. 4-5 threadnel a contention mar olyan nagy h minden queue lock access contended lesz, es a throughputot ledominalja a ctx switching
+
+a throughput kulonbseg a ket queue implben levo kulonbozo serialization fokbol ered. a sync LL az egesz queue statet egy lockkal guardolja ami az offer() v remove() hivasok egesz idotartama alatt tartva van; a CLQ-ben viszon nonblocking queue algo van (ld. 15.4.2) ami atomic refekkel updateli a link pointereket. az elobbinel az egesz insert/remove serialized; az utobbinal csak a pointerek updatelese serialized
+
+[[[11.2.2. Applying Amdahl's Law Qualitatively]]]
+Amdahl tv szamszerusiti a lehetseges speedupot ha tobb available rsc van, amennyiben pontosan meg tudjuk estimalni h az exec mekkora resze serialized. bar a serialization direkt merese nem egyszeru, a tv anelkul is hasznos lehet
+
+multiproc sys ma mar nem csak 2-4 procot, hanem 100/1000 nagysagrendet is jelenthet. vannak algok amik mondjuk 4 procnal meg scalablenek tunnek, de valojaban scal bottleneckek vannak bennuk. egy algo kiertekelesekor erdemes meggondolni mi tortenne 100/1000 procnal. pl. 11.4.2 es 11.4.3 lock granularity reducing technikakat targyal (lock splitting/striping). Amdahl tven keresztul nezve egy lock ketfele splittelesevel meg nem nagyon haszn ki tobb proct, de a lock striping igeretesebb mert a proc szam novekedesevel nohet a stripe set merete (perf optok termeszetesen a tenyleges perf reqeket tekintve ertekelendok; neha egy lock ketfele splittelese is eleg lehet)
+
+[[11.3. COSTS INTRODUCED BY THREADS]]
+single threaded prgkban nincs scheduling v sync overhead, es nem kellenek lockok a data structok cons megorzesehez. schedulingnek es interthread coordnak perf ktge van; parhuzamositas perf benefitjenek meg kell haladnia a conc ktget
+
+[[[11.3.1. Context Switching]]]
+ha a main thread az egyetlen schedulalhato thread, akkor szinte sose lesz kischedulalva. de ha tobb runnable thread van mint CPU akkor az OS elobb-utobb preemptal egy threadet h egy masik hasznalhassa a CPUt. ez ctx switch, a jelenleg futo thread exec contextjet mentenie kell, az ujonnan beschedulalt thread exec ctxjet pedig restorolni
+
+ctx switcheknek ktge van: thread scheduling shared data structok manipulalasat igenyli az OS-ben es JVM-ben. az OS es a JVM uazokat a CPUkat hasznalja mint az app; minel tobb idot tolt az OS/CPU annal kevesebb jut az appnak. emellett ha egy uj thread beschedulalodik, a szukseges data valszeg nem lesz benn a local proc cacheben, valszeg lesz jopar cache miss, es ezert a thread lassabban fog futni. ezert van h a schedulerek legalabb egy bizonyos time quantumot adnak minden runnable threadnek meg ha tobb mas thread var is: ez csokk a ctx switch ktget es osszessegeben throughput++ (ara vmennyi resp--)
+
+ha egy thread azert blokkolodik mert contended lockra var, akkor a JVM alt suspendeli a threadet es megengedi h ki legyen switchelve. ha thread gyakran blokkolodik akkor nem fogja tudni kihasznalni a teljes scheduling quantumjat. egy prg ami tobb blockingot csinal (blocking IO, varas contended lockokra, varas condition varokra) tobb ctx switchet tart mint ami CPU-bound, ezzel scheduling overhead++ es throughput-- (nonblocking algok segithetnek h ctx switching-- legyen, ld. 15) 
+
+ctx switch ktge platformfuggo, de alt 5-10e oraciklusba kerul darabja (tobb microsec)
+unix vmstat es win perfmon tool mutatja a ctx switchek szamat es a kernelben toltott ido %-at. magas kernel usage (10% folott) alt heavy scheduling activityt jelent, amit IO v lock contention miatti blocking okozhat
+
+[[[11.3.2. Memory Synchronization]]]
+sync perf costjanak tobb oka van. synchronized es volatile altal nyujtott visibility garanciak mem barriernek nevezett spec instructionoket haszn, amelyek cacheket flusholnok v invalidalnak, hw write buffereket flusholnak, es exec pipelineokat allitanak meg. mem barriereknek indirekt perf kovetkezmenyei is vannak mert meggatolnak compiler optimalizaciokat; a legtobb oper mem barrierek mellett nem reorderelheto
+
+sync perf impactjanak felmeresekor fontos kult tenni a contended es uncontended sync kozott. synchronized az uncontendedre van opt (a volatile az mindig uncontended) es egy "fast-path" uncontended sync perf ktge a legtobb sysben 50-250 clock cycle (amikor a konyvet irtak). bar ez nem 0, a szukseges, uncontended sync ktge alt nem szignifikans az overall app perfben, ha viszont kihagyjuk akkor a safetyt kockaztatjuk vele
+
+modern JVMek probaljak csokk a veletlen sync ktget, kiopt az olyan lockingot ami sosem lesz contended. ha egy lock obj csak a current thread szamara accessible, akkor a JVM kiopthatja a lock acqot hiszen mas thread nem syncelhet erre a lockra (pl. synchronized(new Object()) { //akarmi } - ilyet ne is csinaljunk)
+
+szofisztikaltabb JVMek escape ana segitsegevel azonositjak ha egy local obj ref sosincs a heapre publishelve es ezert threadlocal
+public String getStoogeNames() { List<String> stooges = new Vector<>(); stooges.add(...) 3x; return stooges.toString(); }
+itt az egyetlen ref a Listre a local stooges var, es a stack-confined varok autom threadlocalok. a metodus naiv execelese 4x acqolna es releaselne a Vector lockjat (minden add()-ra 1x + toString()). de egy okos runtime compiler inlinelheti ezeket a hivasokat, aztan megallapitana h stooges es az internal stateje sosem escapel, es igy a negy lock acq eliminalhato (un. lock elision, HotSpot Java 7 allitolag mar tudja)
+
+compilerek ha escape anat nem is csinalnak, csinalhatnak un. lock coarseninget: azonos lockot hasznalo szomszedos synchronized blockok mergelese. elozo metodusban a harom add() es a toString() osszevonasa egyetlen lock acq-releasebe; heurisztikusan osszevetve a sync costjat es a synchronized-ben levo utasitasokat (egy jo dynamic compiler ki tudja talalni h a metodus mindig uazt a stringet adja vissza, es az elso execelese utan recompilolja ugy h mindig az elso exec altal returnolt valuet returnolje). ez nem csak a sync overheadet csokk, de igy az optimizer is egy nagyobb blokkal dolgozhat, ami mas opt lehetosegeket is jelenthet
+
+uncontended sync ktgei miatt nem kell aggodni. mar az alap mech is eleg gyors es a JVM tovabbi optokat tud vegrehajtani. helyette fokuszaljunk ahol tenylegesen lock contention van
+
+egy thread altal vegrehajtott sync mas threadek perfjet is affectalhatja. a sync trafficot kreal a shared mem buson; amelynek bandwidthje limitalt es az osszes proc ezen osztozik. ha threadeknek versenyezni kell a sync bandwidthert akkor minden syncet hasznalo thread meg fogja szenvedni (ez neha erv a nonblocking algok backoff nelkuli hasznalata ellen, mert heavy contention mellett a nonblocking algok tobb sync trafficot generalnak mint a lock-basedek, ld 15)
+
+[[[11.3.3. Blocking]]]
+uncontended sync kezelheto teljesen JVM-en belul; contended sync OS activityt is igenyelhet ami plusz ktg. contended lockingnal a losing threadnek blokkolodnia kell. JVM implhatja a blockingot spin-waitinggel (lock acq retry amig sikeres nem lesz) v suspendeli a blocked threadedet az OS-en keresztul. hogy melyik hatekonyabb, fugg a ctx switch overheadtol es h a lock mennyi ido utan lesz available; rovid waiteknel jobb a spin-waiting, hosszabbaknal a suspension. egyes JVMek multbeli profile adatok alapjan valasztanak a ket lehetoseg kozul, masok egyszeruen csak suspendelik a lockra varo threadeket
+
+ha suspendelunk egy threadet mert nem kap meg egy lockot v mert blokkolodik condition wait v blocking IO miatt, az ket plusz ctx switchet jelent vmint OS es cache activityt: a blocked thread kiswitchelodik mielott a quantumja lejarna es aztan visszaswitchelodik kesobb amikor a lock v mas rsc available lesz (lock contentionbol eredo blockingnak van ktge a lockot tarto thread szamara is: amikor releaseli a lockot akkor meg kell kernie az OSt h resumelje a blocked threadet)
+
+[[11.4. REDUCING LOCK CONTENTION]]
+lattuk h a serialization art a scalnak a ctx switchek pedig a perfnek. contended locking mindkettot okoz, ezert a lock contention csokk javithatja perft es scalt
+
+excl lockkal guardolt rsck accessalasa serialized; egyszerre csak egy thread accessalhatja. lockokat okkal hasznaljuk, pl. prevent data corruption, de ennek a safetynek ara van. lockert valo folyamatos contention limitalja a scalt
+scal fo ellensege conc appokban az excl rsc lock
+
+lock contention vget ket tenyezo befolyasolja: milyen gyakran requestelik a lockot es acqolas utan milyen sokaig van tartva (ez a queuingbol ismert Little tv kovetkezmenye: "stabil sysben a customerek atlagos szama = atlagos erkezesi rate * sysben toltott atl ido). ha a ketto szorzata eleg kicsi akkor a legtobb lock acq kiserlet uncontended lesz, es a lock contention nem jelent nagy veszelyt a scalra. de ha a lockra nagy a demand, akkor a ra varo threadek blokkolodni fognak, extrem esetben pedig a procok emiatt kihasznalatlanul allhatnak
+
+lock contention csokk harom modja: lock tartas duration csokk, lock request frekv csokk, excl lockok helyettesitese koord mechanizmussal ami nagyobb conct tesz lehetove
+
+[[[11.4.1. Narrowing Lock Scope ("Get in, Get Out")]]]
+contention vgenek hatekony csokkentese ha leheto legrovidebb ideig tartjuk a lockot. lockot nem igenylo kodot vegyuk ki a synchronized blockbol, foleg a ktges opereket es blocking opereket (pl. IO)
+
+egy "hot" lock tul hosszu ideig tartasa limitalhatja a scalt, ld. SynchronizedFactorizer (2). ha minden oper 2 ms-ig tartja a lockot, es minden opernek szuksege is van ra, akkor a throughput max 500 oper/sec lehet, fgtl h mennyi proc van. ha 1 ms-re csokk a lock tartas idejet az 1000 oper/sec-re emeli a limitet (es akkor meg nem vettuk figyelembe a magas lock contention okozta ctx switch ktget)
+
+public class AttributeStore {
+  private final Map<String,String> attributes = new Hashmap<>();
+  public synchronized boolean userLocationMatches(String name, String regexp) { ... location = attributes.get(key); ... Pattern.matches(regexp, location); }
+userLocationMatches() mapben lookupolja a user locot es ha megtalalja akkor regexppel ellenorzi h matchel-e patternre. az egesz metodus synchronized de valojaban csak a Map.get()-nek van szuksege a lockra
+
+public class BetterAttributeStore {
+  public boolean userLocationMatches(String name, String regexp) { ... synchronized(this) { location = attributes.get(key); } ... Pattern.matches(regexp, location); }
+csokk a lock durationt. a key megkonstrualasa, pattern matcheles mar nincs a synchronizeden belul, ezek nem accessalnak shared statet
+ezaltal jelentosen csokk a tartott lock mellett execelt instructionok szama. Amdahl tv szerint ez scalt noveli mert a serialized kod menny csokk
+
+mivel csak egy state var van, az attributes, thread safety delegationnal (ld 4) tovabb javithatjuk. ha threadsafe Mapet hasznalunk (Hashtable, synchronizedMap, CHM) akkor az AttributeStore minden thread safetyvel kapcs teendojet delegalhatja az underlying threadsafe collnak. emiatt nem kell expl sync az AttributeStoreban, a Map accessalasara csokkenti a lock scopeot, es eliminaljuk annak a veszelyet h egy kesobbi maintainer elfelejti acqolni a lockot mielott accessalna attributest
+
+synchronized blockok zsugoritasa javithatja a scalt, de a synchronized block lehet tul kicsi is - atomic opereknek (pl. invariantban resztvevo varok updatelese) egy synchronized blockban kell lenniuk. es mivel a sync ktge nem 0, egy synchronized block szettorese tobbre perf kontraproduktiv lehet (ha a JVM lock coarseninget csinal, akkor ugyis visszacsinalja a splittinget). az idealis arany platformfuggo, de gyak csakkor kell egy synchronized block merete miatt aggodni, ha "jelentos" mennyisegu szamitast v blocking opereket tudunk kimozgatni belole
+
+[[[11.4.2. Reducing Lock Granularity]]]
+lock tartasi ido (es ezaltal a contention vg) csokk masik modja ha a threadek ritkabban kerik. ez lock splitting es lock striping segitsegevel tortenhet, amelyeknel kulon lockok guardolnak tobb indep state vart, amiket korabban egy kozos lock guardolt. ezek a technikak csokk a locking granularityjet, nagyobb scalt tesznek lehetove; de tobb lock hasznalata DL risket is noveli
+
+gondolatkiserlet: ha az egesz appban csak egy lock lenne, akkor minden synchronized block execelese serialized lenne. sok thread versenyez a global lockert, no a vge h ket thread akarja egyszerre a lockot, no a contention. viszont ha tobb lock lenne, akkor kisebb lenne a contention, kevesebb thread blokkolodna lockokra varva, es none a scal
+
+ha egy lock tobb mint egy indep state vart guardol, akkor novelhetjuk scalt ha splitteljuk tobb lockra, amelyek mindegyike kulon vart guardol. ezaltal minden lock ritkabban lesz requestelve
+
+public class ServerStatus {
+  public final Set<String> users; public final Set<String> queries;
+  public synchronized void adduser(String u) { users.add(u);} //addQuery(), removeUser(), removeQuery() hasonloan synchronized
+conc logged-on userek es conc execelo queryk setjei. ha be/kiloggol egy user  v query exec kezdodik/vegzodik, a ServerStatus obj updatelodik a megfelelo add/remove metodus meghivasaval. a ket info egymastol teljesen fgtl, szet lehetne splittelni ket kulon classba
+
+public class ServerStatus {
+  public void addUser(String u) { synchronized(users) { users.add(u); }} //addQuery(), removeUser(), removeQuery() hasonloan (synchronized(queries)!)
+nem a ServerStatus lockjaval hanem ket kulon lockkal guardoljuk a userst es a queriest. a lock splitteles utan a finer-grained lockok trafficja kisebb lesz mint az eredeti coarse locke (ha threadsafe Set implt hasznalnank, az impliciten nyujtana a lock splittinget mert mindegyik Set sajat lockot hasznalna a stateje guardolasara)
+
+lock kettobe splittelese akkor a legjobb improvement, ha a lock contentionje mersekelt de nem heavy. kis contentionu lockoknal kis perf/throughput improvement, bar no az a load threshold amelynel a perf a contention miatt csokk kezd. nersekelt contentionu lockok splittelese lenyegeben uncontended lockokka alakitja oket, ami perf/scal szempontjabol a legjobb kimenetel
+
+[[[11.4.3. Lock Striping]]]
+heavily contended lock kettobe splittelese valszeg ket heavily contended lockot eredmenyez. bar kis scal improvement, mivel egy helyett ket thread execelhet conc, de nem igazan javitja a conc lehetosegeket egy olyan sysben ahol sok proc van. ServerStatus peldaban nem igazan lehet tovabb splittelni a lockokat
+
+lock splitting neha extendalhato indep objk setjen valo locking partitionre, un lock striping. pl. CHM impl egy 16 elemu lock arrayt haszn, mindegyik a hash bucketek 1/16 reszet guardolja; a bucket N-et a (lock N mod 16) guardolja. ha a hash fv jol spreadel es a keyek uniform accessalva, ez bmely lock iranti demandet 16x csokkenti. ez teszi lehetove h CHM 16 writert tudjon supportalni (a lockok szama novelheto ha nagy proc szamu sysekben heavy access mellett meg jobb concot szeretnenk, de a stripek szama csakkor nojon a default 16 fole ha bizonyitott h a conc writerek altal okozott contention ezt indokolja)
+
+lock striping hatranya h coll lockolasa excl accessre nehezebb es ktgesebb mint single lockkal. egy operhez alt max egy lockot kell acqolni de neha lockolhatni kell az egesz collt, pl mikor CHM-nek expandolnia kell a mapet es rehashelnie a valuekat tobb bucketbe. ehhez tip acqolni kell a stripe setben levo osszes lockot (intrinsic lockok arbitrary setjenek egyetlen acqolasi modja a recursion)
+
+hash-based map lock stripinggel
+public class StripedMap {
+  private static final int N_LOCKS = 16; private final Node[] buckets; private final Object[] locks;
+  private static class Node {...}
+  public StripedMap(int numBuckets) { buckets = new Node[numBuckets]; locks = new Object[N_LOCKS]; for(i : N_LOCKS) locks[i] = new Object();
+  private final int hash(Object key) { return Math.abs(key.hashCode % buckets.length);
+  public Object get(Object key) { int hash = hash(key); synchronized (locks[hash%N_LOCKS]) { for(Node m = buckets[hash]; m !=null; m = m.next) if(m.key.equals(key) return m.value;)} return null;
+  public void clear() { for(i : buckets.length) synchronized(locks[i%N_LOCKS]) buckets[i] = null; }
+N_LOCKS db lock van, mindegyik a bucketek egy subsetjet guardolja. a legtobb metodusnak, pl. get() csak egy bucket lockot kell acqolnia. mas metodusoknak, pl. clear() minden lockot acqolniuk kell de nem feltetlenul egyszerre. ez a fajta map cleareles nem atomic, tehat nem biztos h van olyan idopont amikor a StripedMap tenylegesen ures, ha mas threadek kozben conc elemeket addolnak; ha atomicka akarnank tenni akkor az osszes lockot egyszerre kellene acqolni. de olyan conc colloknal amelyeket a clientek tip nem lockolhatnak excl accessre, a size() v isEmpty() metodusok eredmenye egyebkent is out-of-date lehet mire returnolnek, ezert ez a furcsanak tuno behav alt elfogadhato
+
+[[[11.4.4. Avoiding Hot Fields]]]
+lock splitting es striping improvolhatja scalt mert lehetove teszik h kul threadek kul datan opereljenek (v azonos data kul reszein) anelkul h interferalnanak. prg ami benefitel lock splittingbol, szuksegszeruen gyakrabban lat contention a lockert mint a lock altal guardolt dataert. ha a lock ket indep X es Y vart guardol, es A thread X-et B thread Y-t akarja accessalni (pl. ServerStatus addUser() es addQuery()) akkor a ket thread nem dataert hanem lockert contendel
+
+lock granularity nem csokkentheto ha vannak varok amelyek minden opernel requiredek. ez is egy olyan area ahol a raw perf es a scal gyakran utkozik; jellemzo optok mint pl. gyakran szamolt ertekek cachelese "hot fieldeket" okozhat, ami limitalja scalt
+
+ha mi implnank HashMapet akkor valaszthatnank h szamolja a size() az entryk szamat. legegyszerubb ha minden hivaskor megszamoljuk az entryket. gyakori opt h countert updatelunk put/removenal; ez kicsit nov a put()/remove() ktget, viszont O(n)-rol O(1)-re csokk a size() ktget
+
+kulon countert tartani olyan operek gyorsitasara mint size() v isEmpty() jol muk single threaded v teljesen sync implnal, de megneheziti az impl scal improvolasat, mert minden opernek ami a mapet modifolja, a shared countert is updatelnie kell. meg ha a hash chainekhez lock stripinget is haszn, a counter access syncelese ujra behozza az excl locking problemajat. ami perf optnak tunt - size() eredm cachelese - scal problemava valtozott. a counter un hot field, mivel minden mutative opernek accessalnia kell
+
+CHM ezt ugy keruli el h size() enumeralja a stripeket es osszeadja az egyes stripekben levo elemek szamat, nem global szamot haszn. h ne kelljen minden egyes elemet enumeralni, minden stripehez kulon count fieldet maintainel, amit szinten a stripe lock guardol. ha a size()-t gyakran hivjak a mutative operekhez kepest, akkor a striped data structok tudnak erre optolni, ha becachelik a coll sizet egy volatileba amikor a size() meghivodik, es invalidaljak a cachet (-1-re allitjak) amikor a collt modifoljak. ha a size()-ba valo belepeskor a cached value nemnegativ akkor pontos es returnolheto, egyebkent ujra kiszamoljuk
+
+[[[11.4.5. Alternatives to Exclusive Locks]]]
+lock contention effect csokk harmadik modja ha excl lockok helyett a shared statet vmi mas conc friendly modon manageljuk. pl. conc collok, RW lockok, immut objk, atomic varok
+
+ReadWriteLock (ld 13) tobb reader, single writer lockingot enforcol: tobb mint egy reader accessalhatja conc a shared rsct amig egyikuk sem akarja modifolni, de a writereknek excl kell acqolniuk a lockot. fokent readelt data structoknal a RWL nagyobb concot nyujt mint excl locking; read-only structoknal az immut teljesen eliminalhatja a locking needet
+
+atomic varokkal (ld 15) csokkheto a hot fieldek updatelesenek ktge, pl. stat counterek, seq generatorok v linked data structnal a ref az elso nodera (2-ben a servlet peldaknal AtomicLong-ot hasznaltunk a hit counter maintainelesere). atomic var classok nagyon fine grained (es ezert more scal) atomic opereket nyujtanak integereken v obj refeken, es low-level conc primitivekkel (pl. CAS) vannak impl amiket a legtobb modern proc tam. ha a classunkban keves hot field van, amik nem vesznek reszt invariantokban mas varokkal, akkor atomic varokkal lecserelve oket scal javulhat (algo megvaltoztatasa h kevesebb hot field legyen benne, meg jobb lehet - atomic varok csokk a hot field updateles ktget de nem eliminaljak)
+
+[[[11.4.6. Monitoring CPU Utilization]]]
+ha scalt tesztelunk, a cel alt a procok teljes kihasznalason tartasa (unix vmstat/mpstat v win perfmon mutatja)
+ha CPUk kihasznalasa asszim (egyeseken nagy terheles masokon nem) akkor cel h "increased parallelism"-et talaljunk a prgban. asszim kihaszn azt jelzi h a szamitasok nagy resze threadek egy kis setjeben tortenik es az appunknak nem szarmazik elonye tobb procbol
+
+CPUk nem teljes kihaszn lehetseges okai
+- insufficient load: lehet h a tesztelt appon nincs eleg load. noveljuk a loadot es merjuk a kihaszn, resp time, service time valtozasat. egy app saturalasahoz elegendo loadot generalni nagy teljesitmenyt igenyel; lehet h a client sysek nem tudnak tobbet
+- IO bound: csekkelhetjuk h az app disk-bound (iostat v perfmon) v bandwidth-limited (nw traffic level monitoring)
+- externally bound: ha az app ext serviceken dep, pl. DB v webservice, a bottleneck lehet h nem a mi kodunkban van. profiler v DB admin toollal csekkelheto h mennyi idot toltunk az ext sys valaszaira varva
+- lock contention: profiling toolokkal csekkelheto mekkora az appban a contention es melyek a "hot" lockok. neha profiler nelkul is megallapithato: random sampling, thread dumpok triggerelese, lockert contendelo threadek csekkelese. ha egy thread lockra varva blokkolodik, a megfelelo stack frame a thread dumpban "waiting to lock monitor...". a tobbnyire uncontended lockok ritkan jelennek meg thread dumpban; heavily contended locknal szinte mindig lesz min egy ra varo lock, es igy gyakran jelenik meg thread dumpokban
+
+ha az appunk elegge kihasznaltan tartja a CPUkat akkor mon toolokkal megallapithato h plusz CPUkbol profitalhatnank-e. 4 threades app teljesen kihasznaltan tud tartani egy 4-way syst, de 8-way sysen futtatva uezt valszeg nem lesz perf++, mivel nem lesznek waiting runnable threadek amik ki tudnak hasznalni a plusz procokat (lehet h reconfigolhatjuk az appot h tobb threadre ossza el a workloadot, pl. thread pool size adjust). vmstat mutatja a runnable threadeket amelyek jelenleg nem futnak mert nincs available CPU; ha a CPU kihaszn nagy es mindig vannak CPUra varo threadek, akkor az app valszeg profitalna plusz procokbol
+
+[[[11.4.7. Just Say No to Object Pooling]]]
+korai JVM-ekben az obj alloc es a GC lassuak voltak de azota jelentos perf++
+"lassu" obj lifecycleok megkerulesehez sok developer obj poolingot hasznalt, ahol az objk GC helyett recyclelodnek es szukseg eseten ujra allocolodnak. de ez valojaban meg a GC overhed csokk-el egyutt is perf-- a legktgesebb objk kivetelevel minden objra (light es mediumweight objkra komoly loss) a single threaded prgkban
+CPU cycle loss mellett az obj poolingnek szamos mas problemaja is van: pool sizeok helyes meretenek beall (tul kicsi eseten a pooling hatastalan; tul nagy terheli a GC-t, retainelve memet amit hatekonyabban lenne masra haszn); risk h obj nem lesz megfeleloen resetelve az ujonnan allocalt statejere, subtle bugok; risk h thread returnol egy objt a poolba de tovabbra is hasznalja; tobbletmunkat okoz a generational GC-nek, old-to-young refek miatt
+
+conc appokban pooling meg rosszabb. ha threadek uj objkat allocolnak, nagyon keves interthread koord required, mivel az allocatorok alt threadlocal alloc blockot haszn, h eliminaljak a heap data structok syncjet. de ha a threadek ehelyett poolbol kernek objt, akkor sync kell a pool data struct accessalasanak koordjahoz, ami thread blokkolodast okozhat. mivel lock contention miatti thread blokkolas ktge sokszorosa egy allocenak, meg kis mennyisegu pool-okozta contention is scal bottleneck (meg egy uncontended sync is dragabb mint egy obj alloc). itt is perf opt volt a cel, de scal hazard lett belole. poolingnak is vannak hasznai (constrained envekben mint pl. J2ME v RTSJ, a hetkonyabb mem mgmt v resp++ erdekeben) de perf optkent nem igazan. obj alloc alt olcsobb mint sync
+
+[[11.5. EXAMPLE: COMPARING MAP PERFORMANCE]]
+CHM single threaded perfje kicsit jobb mint sync HashMape, de conc haszn mellett tunik ki igazan. CHM impl azt felt, h a leggyakoribb oper egy mar existing value retrievelese, es ezert a sikeres get() operekre van perf es conc optva
+
+sync Map implk fo scal akadalya h az egesz mapra egy darab lock van, ezert egyidejuleg csak egy thread accessalhatja. CHM viszont nem lockol a legtobb sikeres read operre, lock stripinget haszn writeokra, es arra a keves readre ami lockingot igenyel. eredmenykent tobb thread accessalhatja conc a Mapet blocking nelkul
+
+CHM vs CSLM vs synchronized HashMap vs synchronized TreeMap scal osszehasonlitas. az elso ketto by design threadsafe, a masodik kettot sync wraper teszi threadsafe. a tesztben N thread futtat conc egy loopot, ami random keyt pickel es megprobalja a htartozo valuet retrievelni. ha a value nincs benn akkor 0.6 vggel hozzaadja a maphez, ha benn van akkor 0.02 vggel removolja
+CHM es CSLM jol scal nagyszamu threadre, throughput++ ahogy thread++. ez a teszt prg tobb per-thread contentiont general mint egy tip app mert lenyegeben csak a mapet pingeti; valodi prg valszeg vegezne tenyleges threadlocal workot is minden iterben
+sync colloknal nem ilyen jo a helyzet. egy threades eset perfje meg ~ CHM-ehez, de ahogy a load az uncontended felol a contended fele mozdul (itt ket threadnel) akkor visszaesik. ez tip olyan kodnal ahol a scalt lock contention limitalja. ha a contention kicsi, az oper altal toltott idot foleg a tenyleges work teszi ki, es a throughput nohet threadek hozzaadasaval. de ha a contention nagy akkor az oper altal toltott idot foleg a ctx switch es sched delay teszi ki, es uj threadek hozzaadasanak nincs hatasa a throughputra
+
+[[11.6. REDUCING CONTEXT SWITCH OVERHEAD]]
+taskokban lehetnek blokkolo operek; running es blocked statek kozti transition ctx switchet jelent. server appokban a blocking egyik forrasa a req processing soran valo log msg generalas; ctx switch-- => throughput++ bemutatasara ket logging approach scheduling behavjet nezzuk meg
+
+legtobb logging fw thin wrapper a println korul: kiiras ott helyben. korabban latott LogWriternel a logging nem a requesting threadben hanem egy dedicated bg threadben tortenik. dev szempontbol a ketto kb egyforma; de perf kul lehet, fugg a logging activity volumetol, hany thread loggol, es egyeb tenyezoktol pl. ctx switch ktge
+logger ami az IOt masik threadbe teszi perf++ lehet, de design problemak: interruption (mi van ha egy logging operben blokkolt thread interruptolodik), service garanciak (garantalja a logger h egy sikeresen queuolt log msg a service shutdown elott loggolodik), satur policy (mi van ha a producerek gyorsabban gyartjak a log msgket mint a logger thread kezeli oket), service lifecycle (hogy shutdownoljuk a loggert, hogy komm a service statet a producerek fele)
+
+logging oper service timeja magaba foglalja az IO stream classokkal kapcs computationoket; ha az IO oper blokkol, akkor magaba foglalja a thread blokkolodasnak durationjet is. OS deschedulalja a blocked threadet amig az IO bef, kicsit meg tovabb is. mire az IO bef, valszeg lesznek mas aktiv threadek akik beschedulalodnak, es a sched queuen is varhatnak elottunk mas threadek; ez tovabb noveli a service timeot. amennyiben tobb thread loggol parh, akkor contention lehet az output stream lockert; ekkor uaz van mint blocking IOnal, a thread blokkolodik a lockra varva, es kiswitchelodik. inline logging IOt es lockingot tartalmaz, ami ctx switching++ es service time++
+
+request service time++ nem kivanatos. hosszabb service time azt jelenti h vkinek hosszabban kell a resultra varnia. tovabba tobb lock contentiont is jelent. 11.4.1 "get in get out" szerint leheto legrovidebb ideig tartsuk a lockokat, mert minel tovabb tartjuk annal valoszinubb h contended lesz. ha thread IOra varva blokkolodik mikozben lockot tart, egy masik thread akarhatja uezt a lockot. conc sysek perfje jobb ha a legtobb lock acq uncontended, mivel contended lock acq tobb ctx switchet jelent. tobb ctx switchet jelento coding style tehat throughput--
+
+IO kimozgatasa a req processing threadbol valszeg csokk a request processing atl service timejat. log()-ot hivo threadek tobbe nem blokkolodnak az output stream lockra v IOra varva; csak be kell queuezniuk a msgt es aztan visszaterhetnek a taskjukhoz. viszont ezzel bejon a msg queueert valo contention lehetosege, de a put() lighter-weight mint a logging IO (ami sys callokat igenyelhet) es igy kevesbe valoszinu h blokkolodik (amig a queue nincs tele). mivel a request thread igy kevesbe valoszinuen blokkolodik, kevesbe valoszinu h req kozepen ki-ctx switchelodik. ezzel egy IOt es lock contentiont tartalmazo komplex code pathot straight-lineba transformaltunk
+
+az IOt egy olyan threadbe mozgattuk ahol a user nem erzekeli a ktget. de ha minden logging IOt egyetlen threadbe mozgatunk akkor eliminaljuk az output streamert valo contention eselyet es ezzel a blocking egy formajat. ezzel throughput++ mert kevesebb rsct hasznal schedulingre, ctx switchre, lock mgmtre
+
+az IOt sok req processing threadbol egyetlen logger threadbe mozgatva ~ tuzoltas. ha 100 ember rohangal vodrokkel, akkor valoszinubb a contention a csapnal es a tuznel, es kisebb hatekonysag mivel minden worker folyamatosan mas workot csinal. vodorlancnal kevesebb energia, es minden worker vegig uazt csinalja. ahogy az interruptionok prod-- az embereknel, uugy blocking es ctx switching a threadeknel
+

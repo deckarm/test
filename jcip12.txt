@@ -1,0 +1,244 @@
+Chapter 12. Testing Concurrent Programs
+
+conc prgk designja hasonlo a single threadedhez, de nondeterminizmus van benne, ezaltal no a lehetseges interactionok es failurek szama
+conc prgk tesztelese a seq prgkere epul; csak nagyobb az elromolhato dolgok space-e. conc prgkban a lehetseges hibak nem mindig determinisztikusan fordulnak elo, az ilyeneket kimutatasahoz extenziv es hosszan futo tesztek kellenek
+
+conc classok tesztelese safety v livenessre iranyul ("nothing bad ever happens" vs "sg good eventually happens")
+
+safety testek azt verifyoljak h class behav conform-e spechez, alt invariantokat tesztelnek. pl. LL impl ami minden modifnal cacheli a list sizeot; egy safety test oszehas a cached szamot a tenyleges listaelemek szamaval. single threaded appban ez egyszeru mert a lista nem valt a teszt alatt. de conc prgban race lehet, hacsak nem tudjuk egyazon atomic operben observelni a cache fieldet es megszamolni az elemeket. pl excl accessre lockoljuk a listat az impl altal nyujtott vmi "atomic snapshot" feature segitsegevel v az impl altal nyujtott "test point"okkal amelyekben a testek assertalhatjak az invariantokat v a test atomic execelesevel
+
+szerencsetlen esetben a hibas eseteket szimulalo test kod olyan timing v sync artifactokat is behozhat amelyek elmaszkoljak a tenyleges bugokat (un Heisenbugs)
+
+liveness testek tobbek kozt progresst/nonprogresst tesztelik; de hogy verifyoljuk h egy metodus blokkol v csak lassan fut? hogy teszteljuk h egy algo NEM DL-el? mennyi ideig kell varnunk mielott kijelenthetjuk h failelt?
+
+livenesshez kapcs a perf testek. perf meres modjai
+throughput: rate amellyel conc taskok egy setje completel
+resp: egy action requestje es completionja kozti delay (latency)
+scal: throughput++ ha tobb rsct (alt CPU) adunk hozza
+
+[[12.1. TESTING FOR CORRECTNESS]]
+cocnc classra irt unit test irasa uugy kezd mint seqnel - invariantok es postcondok azonositasa. ha szerencsenk van, a spec leirja oket, egyebkent iterativan kell felfedeznunk
+
+bounded bufferre fogunk testcaseket irni
+public class BoundedBuffer<E> {
+  private final Semaphore availableItems, availableSpaces; private final E[] items; private putPosition = 0, takePosition = 0;
+  public BoundedBuffer(int capacity) { availableItems = new Semaphore(0); availableSpaces = new Semaphore(capacity); items = (E[]) new Object[capacity]; }
+  public boolean isEmpty() { return availableItems.availablePermits() == 0; }
+  public boolean isFull() { return availableSpaces.availablePermits() == 0; }
+  public void put(E x) throws InterruptedException { availableSpaces.acquire(); doInsert(x); availableItems.release(); }
+  public E take() throws InterruptedException { availableItems.acquire(); E item = doExtract(); availableSpaces.release(); return item; }
+  private synchronized void doInsert(E x) { int i = putPosition; items[i] = x; putPosition = (++i == items.length) ? 0 : i; }
+  private synchronized E doExtract() { int i = takePosition; E x = items[i]; items[i] = null; takePosition = (++i == items.length) ? 0 : i; return x; }
+
+fixed-length array based queue, blocking put()/take() metodusok amiket ket semaphore controllal. availableItems az elemek szama amelyek removolhatoak a bufferbol, init 0-ra (buffer az elejen ures). availableSpaces az elemek szama amennyi insertelheto a bufferbe, init buffer sizera
+take()-hez eloszor kell egy permit availableItems-bol. ha buffer nonempty akkor ez sikerul, egyebkent blokkol amig nonempty lesz. ha megvan a permit akkor removoljuk a kov bufferelemet es releaseljuk a permitet az availableSpacesnek (counting semaphoroknal a permitek nincsenek expl reprezentalva v owning threadhez kapcsolva; release() permitet kreal, acquire() permitet consumal). put() forditva. tehat take()-bol v put()-bol exitelesnel a ket semaphore countjainak osszege pont = bound (gyakorlatban ha bounded buffer kell, akkor haszn ABQ-t v LBQ-t ne sajatot, itt csak az insert/removalok demoja miatt)
+
+[[[12.1.1. Basic Unit Tests]]]
+alap unit testek uolyanok mint seqnel: bounded buffer krealas, metodushivasok, postcondok es invariantok assertalasa. invariantok pl. ujonnan krealt buffer empty, es egyuttal nem full. pl. N capacityju bufferbe N elem insertalas (ennek sikerulnie kellene blocking nelkul) majd csekkelni h a buffer full, es not empty
+ezek az egyszeru test metodusok seqek; felderitheto veluk h egy problema NEM conc related
+
+[[[12.1.2. Testing Blocking Operations]]]
+conc propertyk tesztelesehez tobb thread kell. legtobb test fw nem conc friendly; nem nagyon tamogatjak a thread krealast es monitorozast. ha egy test case altal krealt helper thread failuret detektal, a fw alt nem tudja h melyik testhez tart a thread, emiatt a success/failure infot vhogy vissza kell juttatni a main test runner threadbe h reportalni lehessen
+
+java.util.concurrent tesztelesehez fontos volt h a failurek osszekapcsolhatoak legyenek egy adott testtel. ezert krealtak egy base test classt (JSR166TestCase.java) amely metodusokat nyujtott a failurek reportolasahoz a teardown soran; azt a konvenciot kovetve h minden testnek meg kell varnia amig az altala krealt threadek terminalnak. a legfontosabb req h tudjuk mikor passed a test, a failure info pedig vhol reportolva legyen
+
+ha egy metodus bizonyos feltetelek mellett blokkol, akkor erre a behavre vonatkozo test csakkor succesful ha a thread nem halad tovabb. metodus blokkolas tesztelese hasonlo annak tesztelesehez amikor a metodus exct dob; ha a metodus normal modon returnol az fail
+
+metodus blokkolas tesztelesenel plusz komplexitas: ha a metodus sikeresen blokkol, akkor vhogy meg kell gyozni h unblockoljon. pl interruptionnal: blocking activity kulon threadben startolva, varunk amig a thread blokkol, interruptoljuk es aztan assertalunk arra h a blocking oper completed. ehhez persze a blocking metodusoknak koran kell returnolnie v InterruptedExceptiont dobni
+
+a "varunk amig a thread blokkol" nem egyszeru: gyakorlatban arbitrary dontes arrol h az execelendo instructionok mennyi ideig tartanak es annal kicsivel tobbet varni. fel kell keszulni arra h ezt az erteket novelni kell ha nem megfelelo (kulonben spurious test failurek lesznek)
+
+blocking oper tesztelese
+void testTakeBlocksWhenEmpty() {
+  final BundedBuffer<Integer> bb = new BoundedBuffer<>(10); 
+  Thread taker = new Thread() { 
+    public void run() { try { int unused = bb.take(); fail(); //ha eljutunk idaig az hiba } catch(InterruptedException success) {}}};
+	try { taker.start(); Thread.sleep(LOCKUP_DETECT_TIMEOUT); taker.interrupt(); taker.join(LOCKUP_DETECT_TIMEOUT); assertFalse(taker.isAlive()); } catch(Exception unexpected) { fail(); }
+taker thread megprobal elemet takelni empty bufferbol. ha siker akkor failuret regisztral. a test runner thread startolja a taker threadet, var egy ideig, aztan interruptolja. ha a taker thread az elvarasnak megfeleloen blokkolt a take()-ben akkor InterruptedException-t dob es a catch blokk ezt successkent kezeli es hagyja a threadet exitelni. a main test runner thread ezutan megprobal joinolni a taker threaddel es a Thread.isAlive() hivassal verifyolja h a join sikeresen returnolt; ha a taker thread valaszolt az interruptra akkor a joinnak gyorsan completelnie kell
+
+ez a timed join biztositja h a test completel meg ha a take() be is ragad vmilyen unexpected modon. a take() tobb propertyjet is teszteli; nem csak azt h blokkol hanem azt is h interrupt eseten InterruptedExceptiont dob. ez azon esetek egyike ahol Thread subclassolas jobb mint Runnable haszn: h a megfelelo terminationt tudjuk a joinnal tesztelni. uezzel az approacchal tesztelheto h a taker thread unblockol miutan a main thread egy elemet tett a queuera
+
+Thread.getState() csabito lehet annak verifyolasara h a thread condition wait miatt blokkolodik, de ez nem reliable. semmi nem requireli h a blocking thread valaha is belepjen a WAITING v TIMED_WAITING statekbe, mivel a JVM implhatja blockingot spin waitinggel is. hasonloan mivel Object.wait()-bol v Condition.await()-bol lehet spurious wakeup (ld 14) ezert egy WAITING-ben v TIMED_WAITING-ben levo thread temp atmehet RUNNABLE-be meg akkor is ha a condition amire waitel meg nem true. es azzal is eltelhet ido amig a target thread atkerul blocking statebe. tehat Thread.getState() nem hasznalhato conc controlra, es testingnel se tul hasznos; debugging info forraskent hasznalhato
+
+[[[12.1.3. Testing Safety]]]
+eddigi tesztek data racekkel nem fogl. annak tesztelesere h egy conc class unpred conc access eseten jol mukodik, tobb threadet kell setupolnunk amelyek put()/take() opereket hajtanak vegre
+
+conc classok safety errorjait felderito tesztek chicken-egg problema: maguk a test prgk is conc prgk, es jo conc testeket fejleszteni komplikaltabb lehet mint magukat a tesztelt classokat
+
+conc classok hatekony safety testjeinek irasanal a fo challenge azon propertyk azonositasa amelyek jo esellyel failelnek ha vmi felremegy, uakkor ne engedjuk h a failuret vizsgalo kod mestersegesen modositsa a conct. legjobb ha a test property csekkelese nem igenyel semmilyen syncet
+
+egy approach ami P/C designokban (pl. BoundedBuffer) jol muk, annak csekkelese h minden amit berakunk a queueba/bufferbe az ki is jon, de semmi mas. ennek naiv implja egy "shadow" listbe inserteli/removolja az elemet amikor az bekerul/removolodik a queueba, es assertalja h a shadow list ures a teszt vegen. de ez torzithatja a test threadek schedulalasat mert a shadow list modifolasa valszeg syncet es blockingot jelent
+
+jobb az enqueuolt/dequeueolt elemek checksumjat kiszamolni order-sensitiv checksum fvel es osszehasonlitani; ha match akkor test pass. ez single P, single C esetben a legjobb mert ekkor nem csak azt ell h a jo elemek jonnek ki, de azt is h jo sorrendben
+
+ezt kiterj tobb P, tobb C-re; olyan checksum fv kell ami insensitive az elemek orderjere, igy tobb checksum kombinalhato a teszt vegen (ezt bmely kommutativ oper, pl. + v XOR teljesiti). egy shared checksum fieldhez valo sync access conc bottleneck lehet v torzithatja a test timingjet 
+
+h biztositsuk h tenyleg azt teszteljuk amit akarunk, fontos h a compiler ne tudja a checksumot kitalalni. nem jo otlet egymast koveto integereket haszn test datakent mert akkor mindig uaz az eredmeny es egy okos compiler precomputalna
+
+ezt elkerulendo a test datat random kell generalni, de rossz random gen valasztas is prob lehet. random number generalas (RNG) couplingot krealhat a classok es a timing artifactok kozt mert a legtobb RNG class threadsafe es emiatt plusz syncet okoz (sok benchmark szandektalanul valojaban azt teszteli h a RNG mekkora conc bottleneck). ha minden threadnek sajat RNG-je van, az lehetove teszi non-threadsafe RNG hasznalatat
+
+general purpose RNG helyett jobb egyszeru pseudornd fveket haszn. eleg annyi randomness ami bizt h futasonkent mas-mas szamok lesznek. pl. xorShift(int). hashCode()-bol v nanoTime()-bol szarmazo valuekkal hasznalva gyak biztos h minden futasnal mas lesz
+
+PutTakeTest (pelda tesz kod): N db P thread ami elemeket general es enqueueol, N db C thread ami dequeueol. mindegyik thread updateli a bejovo/kimeno elemek checksumjat, per-thread checksumok a test vegen kombinalva, igy nem adnak hozza tobb syncet es contentiont mint ami a buffer tesztelesehez szukseges
+
+platformtol fuggoen thread krealas/startolas mersekelten heavyweight oper lehet. ha a threadunk rovid ideig fut es tobb threadet startolunk loopban, worst case esetben a threadek seq futnak nem conc. meg egy kevesbe rossz esetben is az elso thread egy darabig egyedul fut, aztan az elso ket thread conc fut, es csak egy ido utan fut az osszes thread conc (vegen uez, a korabban indulo threadek hamarabb is allnak le)
+
+5.5.1-ben starting/finish gatekent hasznalt CDL-ekkel csokkentettuk ezt a problemat. masik mod CyclicBarrierrel, worker threadek szama + 1-re initelve, es a worker threadek es a test driver a barriernel varnak a futasuk elejen es vegen. ez biztositja h minden thread futni fog mielott elkezdene dolgozni. PutTakeTest igy koordinalja a worker threadek inditasat/leallitasat, ezaltal tobb conct biztositva. ez meg mindig nem garantalja h a scheduler nem futtatja az osszes threadet seq; de ha a futasokat eleg hosszuva tesszuk azzal csokk ennek az eselyet
+
+PutTakeTest ezen kivul egy determ termination kriteriumot haszn, h ne kelljen plusz interthread koord annak megallapitasara h mikor van vege a tesztnek. test() uannyi P-vel es C-vel indul, es mindegyik uannyi elemet put()-ol es take()-el, igy az osszesen addolt es removolt elemek szama uannyi
+
+az ilyen tesztek jok a safety viok megtalalasara. pl. semaphore altal kontrollalt bufferek impljanal gyakori hiba h elfelejtik h az insertet/extractot vegzo kod mutual exclt igenyel (synchronized v ReentrantLock). PutTakeTest futtatasa gyorsan elfailel egy olyan BoundedBufferrel ahol doInsert()/doExtract() nem synchronized. ha megfuttatjuk PutTakeTestet nehany tucat threaddel, par millioszor, klf capacityju buffereken, akkor mar jo mintank van ra h put()/take() nem csinal data corruptiont
+
+testeknek multiproc syseken kell futnia h a noveljuk a thread interleavinget. de ha nehanynal tobb CPUnk van az nem szuksegkeppen teszi hatekonyabba a teszteket. ha novelni akarjuk a timing-sensitive data racek detektalasanak eselyet, akkor tobb aktiv thread kell mint CPU, h minden idopillban legyenek futo es kiswitchelt threadek is, igy csokkentve a threadek kozti interactionok predictabilityjet
+
+olyan teszteknel, amik fix szamu oper completeleseig tartanak, lehet h a testcase sosem fej be ha a tesztelt kod bug miatt excre fut. leggyakoribb kezelese ha a test fw abortalja a testeket amik biz idon belul nem terminalnak; a varakozasi idot empirikusan kell megall, utana pedig analizalni a failuret h biztosan nem az volt a problema h nem vartunk eleget (ez egyebkent nem conc spec, uigy van seq teszteknel is)
+
+[[[12.1.4. Testing Resource Management]]]
+eddigi testek azt neztek h a class teljesitette-e a spect. masik test aspect: NEM csinalja amit NEM kell neki, pl. rsc leakeles. bmely obj ami mas objkat tart v managel, ne maintaineljen refeket azokra az objkra hosszabban mint szukseges. az ilyen leakek preventaljak h a GC reclaimelni tudja a memet (v threadeket, file handleket, socket handleket, DB connokat v egyeb limted rscket) es rsc exhaustionhoz es app failurehez vezethetnek
+
+rsc mgmt issuek nagyon fontosak olyan classoknal mint BoundedBuffer, hiszen a buffer boundolas oka epp az h preventaljuk a rsc exhaustionbol eredo app failuret ha P-k nagyon megelozik a C-ket. a bounding fogja blokkolni a tul produktiv P-ket h ne krealjanak tovabbi workot ami fogyasztja a memet es egyeb rscket
+
+nem kivant mem retention tesztelheto heap inspection toolokkal, amik merik az app mem usaget
+testLeak() metodus (pelda teszt kod): heap snapshotok, amik GC-t forcolnak (tenylegesen nem "forcolas", hiszen System.gc() csak javasol) es feljegyzik a heap size es mem usage infot. tobb nagy objt rak be a bounded bufferbe, majd removolja oket; a ket heap snapshot pontban a mem usage kb egyforma kell legyen. ha doExtract()-ban nem lenne kinullozva a ref a returnolt elemre (items[i] = null) akkor nem lennenek egyformak (ez egyike azon eseteknek ahol az explicit nullozas szukseges, egyebkent nem az, sot karos)
+
+[[[12.1.5. Using Callbacks]]]
+client-provided kodba valo callbackek hasznosak lehetnek test case konstrualashoz; callbackek gyakran az obj lifecycle ismert pontjain tortennek, ami jo lehetoseg invariantok assertelesere. pl. TPE behiv a task Runnablekbe es ThreadFactoryba
+
+thread pool tesztelese magaba foglalja az exec policy teszteleset: lesznek-e plusz threadek krealva amikor kell ill nem lesznek amikor nem kell; idle threadek reapelodnek-e amikor kell stb. 
+
+thread krealas instrumentalhato custom thread factoryval
+class TestingThreadFactory implements ThreadFactory {
+  public final AtomicInteger numCreated = new AtomicInteger(); private final ThreadFactory factory = Executors.defaultThreadFactory();
+  public Thread new Thread(Runnable r) { numCreated.incrementAndGet(); return factory.newThread(r); }
+krealt threadeket szamolja; test casek verifyolhatjak a test run soran krealt threadek szamat. extendalhato h olyan custom Threadet returnoljon ami feljegyzi amikor a thread terminal, h a test casek verifyolni tudjak h a threadek az exec policynak megfeleloen reapelodnek-e
+
+ha core pool size < max size, a poolnak nonie kell ahogy az exec demand no. ha hosszan futo taskokat submittolunk a poolnak akkor az execelo taskok szama eleg hosszu ideig const marad ahhoz h assertelni lehessen pl. h a pool az elvartnak megfeleloen expandolodik-e (pelda teszt kod)
+
+[[[12.1.6. Generating More Interleavings]]]
+conc kodban levo lehetseges failurek kozul sok kis vgu event van, de vannak technikak amikkel novelhetjuk ezt a vget. pl. lattuk h ha olyan multiproc sysen futtatunk ahol kevesebb proc mint aktiv thread, akkor tobb thread interleaving lesz mint akar single threaded sysben akar sokprocosban
+
+trukk az interleavingek szamanak novelesere es ezaltal a prg state space jobb kihasznalasara, Thread.yield()-el osztonozni a ctx switchet olyan operek kozben amelyek shared statet accessalnak (platformfuggo mert a JVM kezelheti yieldet noopkent; egy rovid de nonzero sleep lassabb de megbizhatobb mo)
+public synchronized void transferCredits(Account from, Account to, int amount) { from.setBalance(from.getBalance() - amount); if(random.nextInt() > THRESHOLD) Thread.yield(); to.setBalance(to.getBalance() + amount);
+a ket update oper kozt az olyan invariantok mint "az accountok osszegyenlege 0" nem allnak fenn. ha oper kozepen yieldelunk akkor aktivalni tudunk timing-sensitive bugokat olyan kodokban amik nem haszn megfelelo syncet a state accessalasara. ahhoz h ez a prod kodban ne fusson, csak a tesztben, hasznalhatunk AOPt
+
+[[12.2. TESTING FOR PERFORMANCE]]
+perf testek gyakran a func testek extended verzioi. erdemes is vmennyi basic func testinget berakni a perf testekbe h biztos ne broken code perfjet teszteljuk
+perf es func testek celja mas. perf testek a use casek end-to-end perf metricjeit merik. use scenariok megfelelo setjenek kivalasztasa nem mindig egyszeru; idealis esetben a testeknek tukroznie kellene h a tesztelt objk h vannak az appban tenylegesen hasznalva
+neha nyilvanvalo h mi a megfelelo test scenario. bounded buffert szinte mindig P/C designban haszn, tehat celszeru a C-knek datat feedelo P-k throughputjat tesztelni. PutTakeTest erre a scenariora jol extendelheto perf testte
+
+perf test gyakori masodlagos celja a klf sizingek empirikus megallapitasa, threadek szama, buffer capacok stb. ezek lehetnek platformfuggoek is (pl. proc type, procok szama, mem size) ami dinam configot igenyel, de vannak olyanok ahol uaz az ertek szamos sysben is jol muk
+
+[[[12.2.1. Extending PutTakeTest to Add Timing]]]
+mernunk kell a futasi idot. nem egy single opert probalunk megmerni, hanem az egesz futasi idot es aztan leosztjuk az operek szamaval. mar van benne egy CyclicBarrier a worker threadek startolasara/megallitasara, ezt tudjuk extendalni h egy barrier action segitsegevel merjuk a start es az end idopontot
+
+TimedPutTakeTest (pelda teszt kod): megallapithato vel P/C handoff oper throughputja klf paramok mellett; bounded buffer scal klf threadszam mellett; milyen bound sizet valasszunk
+eredmenyek 4 procos gepen, 1,10,100,1000 buffer capac mellett. size = 1 throughputja nagyon rossz, mivel minden thread csak egy kicsit tud progresselni mielott blokkolodna es masik threadre kezdene varni. size = 10 jelentos javulas, de meg tovabb emelve megint romlik
+
+ami meglepo h lenyegesen tobb threadet hozzaadva a perf csak kicsit romlik. a databol nehez kideriteni az okot, de CPU perf mero tool pl. perfbar kimutatja: meg sok thread mellett sem zajlik sok computation, es ebbol eleg sok a thread blocking/unblocking. tehat van CPU jatekter meg tobb thread szamara, akik szinten uezt csinalnak es ezzel nem rontanak nagyon a perft
+
+de ebbol nem kov h mindig nyugodtan adogathatunk hozza threadeket egy P/C prghoz ami bounded buffert hasznal. ez egy eleg mesterseges teszt; a P-k alig vegeznek workot h legeneraljak a queuera helyezendo itemet, a C-k pedig alig vegeznek workot a retrievelt itemmel. ha valodi P/C appban a worker threadek vegeznek vmi nontrivial munkat az item producolasaval/consumalasaval (mint az alt jell) akkor ez a CPU jatekter eltunne es a tul sok thread hatasa eszreveheto lenne. a teszt fo celja annak merese volt h a bounded bufferen keresztuli P/C handoff hogyan hat a throughputra
+
+[[[12.2.2. Comparing Multiple Algorithms]]]
+bar a BoundedBuffer nem rossz impl, azert nem veszi fel a versenyt ABQ/LBQ-val. a java.util.concurrent algoi reszben ehhez hasonlo tesztekkel lettek kivalasztva es tunolva. a fo ok amiert BoundedBuffer gyengebb h put()-ban es take()-ben is tobb oper van ahol contention lehet - semaphore acq/release, lock acq
+
+a harom impl osszehasonlitasa dual tobbthreades gepen, 256 elemu bufferek mellett, a TimedPutTakeTest egy valtozataval. eszerint LBQ jobban scal mint ABQ. ez elsore furcsa: linked queuenak minden insertnel alloc kell egy link node objt, es ugy tunik ez tobb work mint array based queuenal. de bar tobb alloc es GC overhead, egy linked queue tobb conc accesst tesz lehetove a put()/take() szamara mint az array based queue mert a jo linked queue algok hagyjak a headet es a tailt is fgtl updatelni. mivel az alloc alt threadlocal, az olyan algok amelyek tobb alloct vegrehajtva csokk tudjak a contentiont, alt jobban scal
+
+[[[12.2.3. Measuring Responsiveness]]]
+eddig throughputot mertunk, ami alt a conc prgk legfontosabb perf meroszama. de neha fontosabb h egy individual action mennyi ido alatt completel, amikor service time variancet akarjuk merni. neha lehet hosszabb atlagos service timeot hagyni, ha ezaltal a variance kisebb lesz; ill a predictability is egy ertekes perf meroszam. variance meres ehhez hasonlo QoS kerdesekre segithet valaszt adni: "operek hany %-a lesz sikeres 100 ms alatt"
+
+alt a task completion idok hisztogramja a service time variance legjobb megjelenitese. variancet kicsit nehezebb merni mint atlagot - az aggregalt completion ido mellett per-task completion idoket is nyilvan kell tartani. mivel a timer granularity is tenyezo lehet az individual task time meresenel (individual task lehet rovidebb is mint a legkisebb "timer tick" ami torzitja a task duration mereset), ezert hasznalhatjuk a meresnel a put()/take() operek kismeretu batcheit
+
+TimedPutTakeTest per-task completion idoi, buffer size = 1000 mellett, ahol 256 conc task iteral 1000 nonfair ill fair semaphore mellett (semaphore/lock fair ill nonfair queueingje, ld. 13.3). nonfair semaphoreknel a completion timeok 104 es 8714 ms kozt szorodnak (80x factor). ez csokkentheto ha a conc controlba tobb fairnesst teszunk: ha fair modera initeljuk a semaphoreokat BoundedBufferben. ezzel a variance jelentosen csokken, 38194 es 38207 ms koze, de sajnos egyuttal jelentos throughput-- (egy hosszabban futo teszt meg tobb tip tasktype-al valszeg meg komolyabb throughput-- lenne)
+
+lattuk korabban h nagyon kicsi buffer sizeok heavy ctx switchinget es rossz throughputot okoznak meg nonfair modeban is, mert szinte minden operben van ctx switch. ha buffer size = 1 mellett futtatjuk uezt a tesztet akkor latszik h a nonfair es a fair semaphorek kb uugy teljesitenek, ebbol latszik h a fairness ktge foleg a thread blockingbol szarm. az is latszik h a fairness nem rontja le nagyon az atlagot, sem javitja nagyon a variancet
+
+tehat hacsak a threadek egyebkent is nem blokkolnak folyamatosan a sync reqk miatt, akkor a nonfair semaphorek jobb throughputot, a fair semaphorek pedig alacsonyabb variancet nyujtanak. mivel az eredmenyek ennyire kulonbozoek, a Semaphore clientjeinek dontenie kell h melyikre akarnak opt a ketto kozul
+
+[[12.3. Avoiding Performance Testing Pitfalls]]
+
+[[[12.3.1. Garbage Collection]]]
+a GC timingje unpred, elofordulhat h a GC egy mert test futas kozben fut le. ha a test prg N itert hajt vegre es ekozben nincs GC, de az N+1. iter triggereli a GC-t akkor a test run mereteben egy kis valtozas is nagy (de spurious) hatassal van time-per-iter-ra
+
+ket modon preventalhato h a GC befolyasolja az eredmenyeinket. az egyik annak biztositasa h a GC egyaltalan ne fusson a test kozben (ld JVM -verbose:gc); a masik h a GC lefusson parszor ugy h a test prg megfeleloen tukrozze vissza az ongoing alloc es GC hatasait. az utobbi gyakran jobb; hosszabb testet igenyel es jobban tukrozi a valos perft
+
+a legtobb P/C appban sok alloc es GC van - P-k uj objkat allocolnak amiket a C-k felhasznalnak es discardolnak. eleg hosszan futtatva a bounded buffer testet h legyen tobb GC, pontosabb eredmenyekhez jutunk
+
+[[[12.3.2. Dynamic Compilation]]]
+dynamic compiled nyelvekre mint a Java, nehezebb perf benchmarkot irni mint static compiledekre mint C,C++. Hotspot es egyeb modern JVM-ek a bytecode interpretation es a dynamic compile egy kombinaciojat haszn. egy ponton, ha egy metodus eleg gyakran fut le, bejon a dynamic compiler es gepi kodda konvertalja; ha ez megvan akkor interpretation helyett a tovabbiakban direct exec lesz
+
+a compilation idopontja unpred. a timing teszteknek csak ezt kovetoen szabad lefutnia; az interpreted kod tesztelesenek nincs ertelme, mivel a legtobb prg eleg hosszan fut ahhoz h minden gyakori code path compilolodjon. ha hagyjuk h a compiler a test kozben is fusson, az ketfelekeppen torzithatja a teszteredmenyeket: a compilation onmagaban is fogyasztja a CPU rscket; ill a compiled es interpreted kod keverekenek merese nem meaningful perf metric. a JVM vegezheti a compilation az app threadben v bg threadben; mindketto masfelekeppen torzitja a timinget
+
+a kod decompilalhato is (vissza az interpreted exechez) majd klf okokbol ujra recompilalhato, pl h loadoljunk egy classt ami korabbi compilationokhoz kapcs assumptionokat invalidal v h elegendo profiling datat gyujtsunk annak megindoklasara h egy code path mas optokkal legyen recompilolva
+
+egy modja h preventaljuk h a compilation torzitsa az eredmenyeinket ha eleg hosszan futtatjuk a prgkat (legalabb nehany percig) h maga a compilation es az interpreted exec csak egy kis reszet tegyek ki a total runtimenak. masik mod ha van egy nem mert "warmup" futas, ami alatt a kod eleget execel ahhoz h teljesen compilolodjon es csak akkor kezdjuk el a timinget. Hotspoton -XX:+PrintCompilation kiir egy msgt amikor a dynamic compilation lefut, igy tudjuk ellenorizni h ez meg azelott megtortenik h mernenk a teszteket
+
+uazt a tesztet tobbszor lefuttatva uazon a JVM instanceon validalhatjuk a testing methodologyt. az elso eredmenyek warmupkent discardolhatoak; ha a tobbiben inkonz van akkor vizsgalhatjuk h miert nem reprodukalhatoak a timing eredmenyek
+
+JVM klf bg threadeket hasznal housekeepingre. ha tobb egymastol fgtl, szamitasigenyes activityt merunk uabban a futasban, akkor erdemes explicit pausekat iktatni a meresek koze, eselyt adva a JVM-nek h catchupoljon a bg taskokkal, minimalis interferenciaval a mert taskoktol (ha kapcsolodo activityket merunk, pl uannak a testnek tobbszori futtatasa, akkor ilyen modon excludolva JVM bg taskokat irrealisan optimista eredmenyeket kaphatunk)
+
+[[[12.3.3. Unrealistic Sampling of Code Paths]]]
+runtime compilerek profiling infot hasznalnak a compiled kod optjara. JVM hasznalhat az execre spec infot h jobb kodot csinaljon, ami azt jelentheti h M metodust az egyik prgban leforditva mas eredmenyt kaphatunk mint a masikban. idonkent a JVM olyan assumptionokon alapulo optokat csinalhat amelyek csak temp igazak, es ha kesobb hamissa valnak akkor invalidalhatja a compiled kodot (pl. JVM monomorphic call tranformationt hasznalhat h egy virtual metodushivast direct metodushivasba konvertaljon ha jelenleg semmilyen loaded class nem overridolja azt a metodust, de ha egy kesobb loaded class overridolja, akkor invalidalja a compiled kodot)
+
+tehat fontos h a test prgok nem csak az app hasznalati patternjeit approximaljak pontosan, hanem az app altal hasznalt code pathokat is. egyebkent a dynamic compiler olyan spec optokat csinalhat egy single threaded test prgra, amelyek a valos, parht tartalmazo appra nem alkalmazhatoak. ezert a multithreaded perf testeket mixelni kell a singlethreaded perf testekkel, meg ha csak a singlethreaded perft akarjuk is merni (TimedPutTakeTest-nel ez nem issue mert meg a legkisebb testcaseben is ket thread van)
+
+[[[12.3.4. Unrealistic Degrees of Contention]]]
+conc appokban ketfele work jell: shared data access mint pl kov task kifetchelese shared work queuebol, es threadlocal szamitas (task exec, felt h a task maga nem accessal shared datat). a ket tipus aranyatol fuggoen az app klf contention levelt fog tapasztalni, es klf perf es scaling behavot fog mutatni
+
+ha N thread fetchel taskokat egy shared work queuebol es execeli oket, es a taskok szamitasintenzivek es hosszan futnak (es nem accessalnak tul gyakran shared datat) akkor szinte nem lesz contention, a throughputot a CPU availability fogja dominalni. ha viszont a taskok rovidek, akkor nagy contention lesz a work queuera es a throughputot a sync ktge fogja dominalni
+
+realis eredmenyekhez a conc perf testeknek approximalnia kell az app altal vegzett threadlocal computationt. ha az appban levo taskok altal vegzett work termeszete v scopeja jelentosen elter a test prgtol akkor hibas kovetkeztetesekre lehet jutni a perf bottleneckek helyet illetoen. pl. 11.5-ben lattuk h lock-based classoknal, mint a sync Map implk, annak h a lock foleg contended v uncontended, jelentos hatasa lehet a throughputra. a tesztek ott csak "pingettek" a mapet, meg ket thread mellett is minden map access contended. de ha egy app minden alkalommal jelentos threadlocal computationt vegez amikor accessalja a shared data structot, akkor a contention level eleg alacsony lehet ahhoz h jo perf legyen
+
+ebbol a szempontbol a TimedPutTakeTest rossz model bizonyos appokhoz. mivel a worker threadek nem csinalnak tul sokat, ezert a throughputot a coord overhead dominalja, es ez nem szuksegkeppen van igy minden appnal amelyek bounded bufferrel exchangolnak datat P-k es C-k kozt
+
+[[[12.3.5. Dead Code Elimination]]]
+ahhoz h jo benchmarkot tudjunk irni, kell h az optolo compilerek ki tudjak szurni es eliminalni a dead codeot. mivel a benchmarkok alt nem szamolnak semmit, konnyu targetek az opt szamara. ez problema mert igy kevesebb execet merunk mint gondolnank. ha szerencsenk van akkor ilyenkor az egesz prg ki lesz opt amibol rajovunk h vmi nem oke; egyebkent csak felgyorsul a prg vmennyivel amit meg tudunk magyarazni vmi massal
+
+dead code eliminalas a static compiled nyelvekben is prob, de konnyebb detektalni ha a benchmarkunk egy resze ki lett opt, mert a gepi kodbol latszik h hianyzik. dynamic compiled nyelveknel ez az info nem hferheto
+
+sok microbenchmark "jobban" teljesit ha a Hotspot -server compilerevel fut mint ha -client-el, nem csak mert a server compiler hatekonyabb kodot fordit, hanem mert jobban opt a dead codeot. sajnos nem opt olyan jol az olyan kodot ami tenylegesen csinal is vmit, mint ahogy a benchmarkot, de meg igy is preferaljuk a -servert a -clienttel szemben, multiproc prod es test esetben is, csak figyeljunk arra h olyan testet irjunk ami nem esik aldozatul a dead code eliminalasnak
+
+hatekony perf test irasnal ra kell vennunk az optimizert h ne opt ki a benchmarkunkat dead codekent. ehhez az kell h a prgunk vhogy minden computed eredmenyt felhasznaljon, oly modon h ahhoz ne kelljen sync v jelentos plusz computation
+
+PutTakeTest-ben kiszamoljuk a queuba addolt/removolt elemek checksumjat, es aztan ezeket interthread kombinaljuk, de ez meg mindig ki lehet optva ha nem hasznaljuk fel a checksum erteket. bar azert van ra szuksegunk h verifyoljuk az algo helyesseget, a felhasznalasat viszont ugy tudjuk bizt ha kiiratjuk. viszont test futas kozben el kell kereulnunk az IOt, h ne torzitsuk a merest
+
+trukk h ugy preventaljuk egy calc nem kivant optjat h kozben ne okozzunk tul nagy overheadet: szam ki vmi derived obj hashcodejat, has ossze vmi arbitrary ertekkel pl. System.nanoTime(), es print()-eljunk egy spacet ha match van. ritkan van match, es ha megis akkor az egyetlen hatasa egy meaningless space kiirasa (print() buffereli az outputot, amig a println() meg nem hivodik igy tenyleges IO ezen a ponton meg nem is tortenik)
+
+nem csak h minden kiszamolt eredmenyt hasznalni kell, de ezeknek kitalalhatatlannak kell lenniuk. egyebkent egy okos dyn opt compiler replacelheti az actionoket precomputed eredmenyekkel. ezt PutTakeTest kezelte, de minden olyan test prg aminek az inputja static data, az vulnerable ezzel az opttal szemben
+
+[[12.4. Complementary Testing Approaches]]
+hatekony test prg sem fog minden bugot megtalalni, komplex prgkban ez unrealistic
+
+a testing celja nem annyira a "find errors" hanem az "increase confidence" h code works as expected. QA plan celja h a leheto legnagyobb confidencet erjuk el az adott testing rsck mellett. conc prgban tobb dolog mehet felre mint seqben ezert uahhoz a confidence levelhez tobb testing kell. a testing kritikus a confidence szempontjabol h a conc classok jol muk, de csak egyike a QA metodologiaknak
+
+klf QA metodologiak hatekonyak klf defect typeok megtalalasaban, es kevesbe hatekonyak mas typeokra. complementary test metodologiak hasznalataval, mint pl code review v static ana, nagyobb confidencet erhetunk el
+
+[[[12.4.1. Code Review]]]
+bar a unit es a stress testek fontosak es hatekonyak a conc bugok megtalalasanal, nem helyettesithetik a code reviewt (es forditva) 
+(leirja h miert jo a code review)
+
+[[[12.4.2. Static Analysis Tools]]]
+hatekony komplementerei a formal testingnek es a code reviewnak. static code ana: kod analizalasa exec nelkul. code auditing toolok analizalni tudjak a classokat common bug patterneket keresve. static ana toolok mint pl. Findbugs bug-pattern detectorokat tart a gyakori coding errorokra, amelyeket a testing v a review nem derit fel
+
+static ana toolok warning listat krealnak, amit aztan at kell nezni h tenyleges errorokrol van-e szo. korabbi toolok, pl. lint sok false alarmot produkaltak, ma mar sokkal jobb a helyzet
+
+konyv irasakor Findbugs az alabbi conc related bug patternekre tart detektort
+- incons sync: sok obj minden vart az obj intrinsic lockjaval guardol. ha egy field gyakran van accessalva, de nem mindig a this lock tartasa mellett, az jelentheti h a sync policy nincs cons kovetve
+ana tooloknak sync policyre von talalgatnia kell, mivel Javaban nincs formal conc spec. ha a @GuardedBy-hoz hasonlo annotationok standardizalva lennenek, akkor az audit toolok tudnak ezeket interpretalni, ahelyett h megprobaljak kitalalni a varok es lockok kozti kapcst
+- invoking Thread.run: Thread impl Runnablet ezert van run() metodusa. de szinte mindig hiba kzvtl run()-t hivni, alt tevedesbol hivjak start() helyett
+- unreleased lock: explicit lockok (ld 13) az intrinsicekkel ellentetben nem releaselodnek autom amikor a control elhagyja a scopeot amelyben acqolodtak. standard idiom h finally blockbol releaseljuk a lockot, mert egyebkent exc eseten unreleased marad
+- empty synchronized block: Java Mem Model szerint az ures synchronized blockoknak van semanticsja, de gyakran hibasan hasznaljak, es alt van jobb mo, bmilyen problemara is akarta alkalmazni a developer
+- double checked locking: broken idiom a sync overhead csokkre lazy init mellett (ld 16.2.4). shared mutable fieldet olvas megfelelo sync nelkul
+- starting a thread from a constructor: subclassing problemak riskjet veti fel, a this ref pedig escapelhet a konstrbol
+- notification errors: notify() es notifyAll() metodusok azt jelzik h egy obj stateje megvaltozhatott; threadeket unblokkolnak amelyek a kapcsolodo condition queuera varnak. ezeket a metodusokat csakkor kell hivni ha a condition queue stateje megvalt. olyan synchronized block ami notify()/notifyAll()-t hiv, de nem modifyol statet, valszeg hibas (ld 14)
+- condition wait errors: condition queuera varaskor Object.wait() v Condition.await()-nek loopban kell hivodnia, a megfelelo lockot tartva, vmi state predicate tesztelese utan (ld 14). ha lock tartas nelkul, nem loopban, v state predicate teszteles nelkul hivjuk az majdnem biztosan hiba
+- misuse of Lock and Condition: Lock hasznalata synchronized block lock argjakent valszeg typo, csakugy mint Condition.wait() hivasa await() helyett (az utobbit testing valszeg megfogja mert elso hivaskor IllegalMonitorStateExceptiont dob)
+- sleeping or waiting while holding a lock: Thread.sleep() hivasa mikozben lockot tartunk, hosszu ideig preventalhatja mas threadek progresst, es ezert komoly liveness hazard. Object.wait() es Condition.await() hivasa ket lock tartasa mellett hasonloan
+- spin loops: kod ami semmit nem csinal csak spinnel (busy wait) mikozben csekkeli egy field expected valuejat, CPU waste, es ha a field nem volatile akkor nem garantalt h terminalni is fog. latchek v condition waitek gyakran jobbak ha state transitionre varunk
+
+[[[12.4.3. Aspect-oriented Testing Techniques]]]
+konyv irasakor AOP technikak limitaltan voltak hasznalhatoak concra mert a legtobb AOP tool nem tam pointcutokat sync pointokban. de AOP hasznalhato invariantok assertalasara v sync policyvel valo compliance csekkelesere (?). pl. aspecttel bewrappelni az osszes non-threadsafe Swing metodushivast azzal az assertionnel h a hivas az event threadben tortenik. mivel ez nem igenyel kodmodositast, konnyen alkhato es felszinre hozhat publication es thread confinement errorokat
+
+[[[12.4.4. Profilers and Monitoring Tools]]]
+legtobb profilerben van vmennyi thread support (de alt instrusivok es jelentosen befolyasolhatjak a prg timingot es behavt). a legtobben megjelenitheto a threadek timelineja es statejei (runnable, blocked waiting for lock, blocked waiting for IO stb), igy latszik h milyen hatekonyan haszn a prg CPUkat, es ha nem tul jol, akkor hol kell az okokat keresni (egyes profilerek allitolag tudjak azt is azonositani h mely lockok okozzak a contentiont, de valojaban ezek nem annyira alkalmasak tenyleges prgok locking behavjenek analizalasara)
+
+a built-in JMX agentnek szinten vannak featurejei thread behav monitorozasara. ThreadInfo class tart a thread current statejet, es ha a thread blocked, akkor a lockot v condition queuet amelyen blokkol. "thread contention monitoring" option enable mellett (defaultbol disabled a perf impactja miatt) megmutatja h egy thread hanyszor blokkolodott lockra v notifra varva, es a varassal toltott kumulalt idot
