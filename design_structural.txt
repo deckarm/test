@@ -1,0 +1,384 @@
+Design Patterns in Java: Structural (Bryan Hansen)
+
+pattern groups: creational/structural/behavioural
+structural: how to use/utilize objs (for perf, refactoring, mem utilization etc)
+adapter, bridge, composite, decorator, facade, flyweight, proxy
+
+===
+[Adapter Design Pattern]
+connecting new code to legacy code without changing the legacy contract
+ld. plug adaptor (pl. USB-to-microUSB atalakito)
+
+concepts
+convert iface to another iface
+alt az egyik oldalon legacy, amit nem tudunk/akarunk megvaltoztatni
+translates client reqs to the code that we are adapting to (client - adapter - adaptee)
+pl. Collections: Arrays -> Lists (arrays are legacy), Streams (have adapters to work with other streams or readers)
+
+design
+client centric (alt integrate new client to legacy components)
+alt iface, de nem required (lehet class is)
+az adaptee is lehet new impl; bar tip nem az
+client.doSomething(): ezt a legacy nem tam, ezert berakunk egy adaptert amiben van egy doThis(), es ez integral a legacy.doThat()-hez
+
+Integer[] intArray = new Integer[] {42,43,44}; List<Integer> intList = Arrays.asList(intArray);
+csak adaptal, es nem ad hozza plusz funkciot (tehat nem decorator)
+nem szereti a peldat, mert csak "egyszeres" adapter, tehat csak arrayt konvertal listbe, mast nem
+
+demo
+public class AdapterDemo { EmployeeClient client = new EmployeeClient(); List<Employee> employees = client.getEmployeeList(); sout(employees);
+public class EmployeeClient { 
+  public List<Employee> getEmployeeList() { List<Employee> employees = new ArrayList<>(); Employee employeeFromDB = new EmployeeDB(...); employees.add(employeeFromDB); return employees;
+public interface Employee { public String getId(), getFirstName(), getLastName(), getEmail();
+public class EmployeeDB implements Employee { private String id, firstName, lastName, email; public EmployeeDB(id, firstName, lastName, email); public String getId() + tobbi getter
+
+ez eddig OK
+public class EmployeeLDAP { private String cn, givenName, surName, mail;  + getterek
+ez nem impl az Employee-t! uolyan employee jellegu class, de masok a fieldnevek, ezert a clientben Employee employeeFromLDAP = new EmployeeLDAP(...) igy nem fordulna le. helyette EmployeeLDAP employeeFromLDAP = new EmployeeLDAP(...); employees.add(new EmployeeAdapterLDAP(employeeFromLDAP));
+public class EmployeeAdapterLDAP implements Employee {
+  private EmployeeLDAP instance;
+  public EmployeeAdapterLDAP(EmployeeLDAP instance) { this.instance = instance; }
+  public String getId() { return instance.getCn(); } public String getFirstName() { return instance.getGivenName(); } ...
+Employee-t impl, tehat annak megfeleloek a getterei, es bewrappel/konstrban atvesz egy EmployeeLDAP-t aminek a mezoit a getterek atmappelik az Employee-nak megfeleloen. a clientben egy ilyen tipusu objt hozza lehet addolni az Employee listahoz
+ebben a formaban a clientben a sout EmployeeAdapterLDAP@...-t ir ki erre a listaelemre. EmployeeAdapterLDAP-be lehet egy toString()-et rakni ami uolyan formaban printeli ki a fieldeket mint az EmployeeDB-nel, de egyesek szerint akkor ez mar decorator lesz (a szerzo szerint nem)
+
+egy masik adapter uugy
+clientbe EmployeeCSV employeeFromCSV = new EmployeeCSV(...); employees.add(new EmployeeAdapterCSV(employeeFromCSV));
+public class EmployeeCSV { int id; String firstname, lastname, emailAddress; //nem impl az Employee-t, mas tipusu es mas nevu fieldek
+public class EmployeeAdapterCSV implements Employee {
+  private EmployeeCSV instance;
+  public EmployeeAdapterCSV(EmployeeCSV instance) { this.instance = instance; }
+  public String getId() { return instance.getId() + ""; } ...
+  
+pitfalls: nem tul sok. ne overkomplikaljuk. lehetseges h egy adapter tobb typera is nyujt adaptolast. adapter arra valo h az egyuttmukodest segitse, nem plusz func hozzaadasara (az akkor decorator v vmi mas lesz)
+
+adapter vs bridge
+adapter: works after code is designed. deals with legacy code. tip retrofitted, unrelated classok egyuttmukodesenek erdekeben. provides a different iface for legacy code
+bridge: designed upfront. lets abstraction and implementation vary, built in advance to provide a layer of abstraction and let both system to be flexible
+both adapt multiple disparate systems
+
+===
+[Bridge Design Pattern]
+
+~adapter, de bridge: new code, adapter: legacy code
+
+concepts
+decouple abstractions and impl
+technikak: encaps, compos, inheritance
+change in abstr won't affect client (client unaware of abstr; decouplolja az implt a client altal latott ifacetol/contracttol)
+key reason ami miatt haszn: details won't be right (ha nem tudjuk biztosan mi lesz az end product, a bridge nyujtja azt az indirectiont/flext aminek a reven a changek nem fognak eltorni dolgokat)
+pl: Driver (JDBC)
+
+design
+ifaces and abstract classes
+composition over inheritance
+more than composition
+app should expect change from both sides
+abstraction, implementor, refined abstraction, concrete implementor
+
+DriverManager.registerDriver(new org.apache.derby.jdbc.EmbeddedDriver()); String dbURL = ...; Connection conn = DriverManager.getConnection(dbURL); Statement stmt = conn.createStatement(); stmt.executeUpdate("...");
+JDBC: API to exec SQL stmts. az impl classok a JDBC driverek. a drivereken relyolo appok (a clientek) abstractionok, amelyek bmilyen DB-vel dolgozhatnak amelyhez letezik JDBC driver. JDBC arch decouplolja az abstractiont az impljatol, igy a ketto indep valtozhat. kicserelhetjuk a DB-t egy masikra, es a client is valtozhat anelkul h az underlying DB-nek ezzel fogl kellene
+
+demo
+main() { Circle circle = new BlueCircle(); Square square = new RedSquare(); circle.applyColor(); square.applyColor();
+public abstract class Shape { public Shape() {} public abstract void applyColor();
+public abstract Circle extends Shape {}
+public abstract Square extends Shape {}
+public class RedSquare extends Square { public void applyColor() { sout(...); } //BlueCircle, RedSquare, BlueSquare classok hasonloan
+ez jol muk de mi van ha pl. green squaret akarunk hozzaadni. uj classt kell krealni minden szinre. ha pedig uj shapet akarunk hozzaadni, akkor kell egy uj abstract Rectangle class, aztan meg a konkret classok minden szinre. ortogonalis problema
+
+uez bridge patternnel
+main() { Color blue = new Blue(); Shape square = new Square(blue); Color red = new Red(); Shape circle = new Circle(red); square.applyColor(); circle.applyColor();
+public abstract class Shape { protected Color color; public Shape(Color color) { this.color = color; } public abstract void applyColor(); //composition!
+public interface Color { public void applyColor(); 
+public class Blue implements Color { public void applyColor() { sout(...); }
+public class Square extends Shape { public Square(Color color) { super(color); } public void applyColor() { color.applyColor(); } //composition!
+itt mar nincs az ortogonalis problema. hozzaadhatunk uj Green implements Color szint, main()-be pedig Color green = new Green(); Shape greenCircle = new Circle(green); greenCircle.applyColor(); a Circle objhoz egyaltalan nem nyultunk (abstracted out from the changes of the colors). uigy mehet Shape greenSquare = new Square(green);
+ez nem egy olyan jo pelda, mert alt nincs color hierarchia, a color inkabb attribute. de jol illusztralja h a bridge egyik oldalan a shape, a masik oldalan a color es ezek egymastol indep valt; uj colort v uj shapet adhatunk hozza anelkul h a masik oldalt valt kellene
+
+masik pelda
+public class Movie { private String title, year, runtime, classification;
+public class Detail { private String label; private String value; 
+public interface Formatter { String format(String header; List<Detail> details);  //~Color az elozo peldaban
+public abstract class Printer { public String print(Formatter formatter) { formatter.format(getHeader(), getDetails()); } protected abstract List<Detail> getDetails(); protected abstract String getHeader(); //composition. nem tud semmit a konkret formatterrol amit kapni fog, csak a contractot ismeri
+
+ahogy az elobb a shapeket es a coloroket, most a printereket es a formattereket valthatjuk egymastol fgtl, ezek a bridge ket oldalan
+public class MoviePrinter extends Printer { 
+  private Movie movie; public MoviePrinter(Movie movie) { this.movie = movie; } //composition!
+  protected List<Detail> getDetails() { List<Detail> details = new ArrayList<>(); details.add(new Detail("Title", movie.getTitle())); /*year, runtime uigy*/ return details; } 
+  protected String getHeader() { return movie.getClassification(); } 
+public class PrintFormatter implements Formatter { public String format(String header; List<Detail> details) { ...StringBuilderrel string a details-bol... } 
+  
+main() { Movie movie = new Movie(); /*set title, year stb*/ Formatter printFormatter = new PrintFormatter(); Printer moviePrinter = new MoviePrinter(movie); String printedMaterial = moviePrinter.print(printFormatter); sout(printedMaterial);
+moviePrinter es printFormatter semmit nem tudnak egymasrol, indep valtozhatnak
+
+uigy krealhatunk pl. egy HTML formattert
+public class HtmlFormatter implements Formatter { public String format(String header; List<Detail> details) { ...StringBuilderrel HTML a details-bol... } 
+main() { Formatter htmlFormatter = new HtmlFormatter(); Printer moviePrinter = new MoviePrinter(movie); String htmlMaterial = moviePrinter.print(htmlFormatter); sout(htmlMaterial); 
+masik formattert adhatunk be uannak a moviePrinter-nek
+es uigy csinalhatunk pl. egy Book POJO-ra BookPrinter-t, es aztan annak beadhatunk PrintFormatter-t v HtmlFormatter-t
+
+pitfalls
+increase complexity
+conceptually difficult to plan
+more than just OO (patternekkel kapcs gyakran mondjak h ha eleg sound OO principleket hasznalunk akkor nincs is szukseg rajuk)
+what goes where (confusing)
+
+bridge vs adapter
+bridge: designed upfront; abstr and impl vary (printer es formatter bmelyiket valt anelkul h breakeltuk volna a masikat); built in advance; complex (ami nem szuksegszeruen rossz)
+adapter: works after code is designed; for legacy apps; retrofitted; provides different iface (for existing/legacy code. nem akarunk uj funct hozzaadni)
+
+===
+[Composite Pattern]
+
+hierarchical, deals with tree structures of info
+
+concepts
+components repr part or whole struct
+compose objs into tree structs
+individual obj treated the same as Composite
+same oper applied on individual and composite; expect to work the same
+pl: java.awt.Component, JSF widgets, RESTful services GETs
+
+design
+tree structured
+root starts with a component
+component: vagy leaf, vagy composite of objs. uazok az operek
+composite tud a child componentjeirol (add, remove, getChild). tip delegal a childjeinek
+
+tulkepp a map es egyeb collok is a composite impljai (addAll(), putAll())
+Map<String, String> personAttrs = new HashMap<>(); personAttrs.put("site_role", "person"); personAttrs.put("access_role", "limited"); 
+Map<String, String> groupAttrs = new HashMap<>(); groupAttrs.put("group_role", "claims");
+Map<String, String> secAttrs = new HashMap<>(); secAttrs.putAll(personAttrs); secAttrs.putAll(groupAttrs);
+
+demo
+main() { Menu mainMenu = new Menu("Main", "/main"); MenuItem safetyMenuItem = new MenuItem(...); mainMenu.add(safetyMenuItem); Menu claimsSubMenu = new Menu(...); mainMenu.add(claimsSubMenu); MenuItem personalClaimsMenu = new MenuItem(...); claimsSubMenu.add(personalClaimsMenu); sout(mainMenu.toString());
+
+public abstract class MenuComponent { 
+  String name, url; List<MenuComponent> menuComponents = new ArrayList<>(); /*name, url getterek*/ 
+  public abstract String toString(); 
+  String print(MenuComponent menuComponent) { //name kiiratas stringbuilderrel
+
+public class Menu extends MenuComponent { //ez a composite
+  public Menu(name, url) {...}
+  public MenuComponent add(MenuComponent menuComponent) { menuComponents.add(menuComponent); return menuComponent; }
+  public MenuComponent remove(MenuComponent menuComponent) { menuComponents.remove(menuComponent); return menuComponent; }
+  //nem feltetlenul kell returnolni a MenuComponent objt add/removebol, de nem kerul semmibe, es kesobb megterulhet ha megvan ez a ref
+  public String toString() { StringBuilder sb = new StringBuilder(); sb.append(print(this)); Iterator<MenuComponent> itr = menuComponents.iterator(); while(itr.hasNext()) { MenuComponent menuComponent = itr.next(); builder.append(menuComponent.toString()); } return builder.toString(); 
+  //eloszor a MenuComponent print()-je; utana a childokon iteralunk vegig, rekurzivan az egesz tree structon; minden child uigy kezelheto
+  
+public class MenuItem extends MenuComponent { 
+  public MenuItem(name, url) {...}
+  public String toString() { return print(this);
+
+main-ben csak a mainMenu-n hivtuk meg a toString()-et es az vegignavigalt az egesz tree structon (easier for clients)
+toString() improvolhato h az egesz tree hiert is kiirja /main/claims/personalClaims
+
+MenuComponenthez hozzaadhatjuk az add() es remove() metodusokat UnsupportedException("feature not supported at this level") implval (tehat nem abstractkent). igy letrehozunk egy contractot minden mas fajta menu typehoz; jelenleg csak Menu es MenuItem van, de csinalhatunk masokat is (pl. ComplexMenuItem, GraphicalMenuItem), es tolunk fugg hogy a hier mely elemeiben @Override-oljuk az add/remove-ot (mint pl. Menu-ben), ahol pedig nem ott unsupported exc dobas lesz
+
+pitfalls
+can overly simplify system
+difficult to restrict what we want to add to it. minden uugy van treatelve, es vegul runtime checkekbe torkollhat h amit addelni akarunk az tenyleg addolhato (compile time safety helyett)
+impl can be possibly costly (ha nagy a compositem vagy ha rosszul impljuk). ha a childok collokban tartva, es mindegyik maga is collt tart akkor a size gyorsan nohet; de ez gyak nem jell
+
+composite vs decorator
+composite: tree struct; leaf and composite have same iface to client; unity between objs
+decorator: contains another entity (ugy hangzik mintha composite lenne, de valojaban composition: obj containing another one); modifies (alt adds) behav of the contained entity; decorates the underlying obj but doesn't necessarily change that concrete class
+
+===
+[Decorator Pattern]
+
+hierarchical, builds func at each level while using composition from similar datatypes
+
+concepts
+also called wrapper: wrap another obj to add func to it
+add behav to obj without affecting other parts of the hier
+more than just inheritance: you're controlling which pieces complement your obj, not necessarily trying to override it
+follows SRP
+compose behav dynamically: by using one of the subclasses that decorate your obj
+pl. java.io.InputStream, java.util.Collections.checkedList(), UI components (AWT, Swing)
+
+design
+inheritance based
+utilizes composition and inheritance (is-a, has-a). there is a common component but func is added in the subcomponents
+alternative to subclassing
+constructor requires instance of the component from hierarchy, which enables it to build upon that and use composition rather than inheritance to override which indiv field it wants to
+UML: ConcreteComponent es a Decorator is a Componentet extendalja!
+
+File file = new File(...); file.createNewFile(); OutputStream os = new FileOutputStream(file); DataOutputStream dos = new DataOutputStream(os); dos.writeChars(...);
+OutputStream a base decorator, FileOutputStream, DataOutputStream concrete decoratorok
+
+demo
+public interface Sandwich { String make(); } //component
+public class SimpleSandwich implements Sandwich { public String make() { return "simple sandwich"; } } //concrete component
+
+public abstract class SandwichDecorator implements Sandwich { //base decorator, Sandwich ifacet impl! (mert nem akarunk concrete implkat csinalni mindenre (SimpleSandwichWithMeat stb))
+  protected Sandwich customSandwich; //sub-decoratorok erre fognak alapozni
+  public SandwichDecorator(Sandwich customSandwich) { this.customSandwich = customSandwich; } //composition! a sandwich impl lehet concrete class v egy ujabb decorator
+  public String make() { return customSandwich.make(); }
+
+public class MeatDecorator extends SandwichDecorator { //concrete decorator
+  public MeatDecorator(Sandwich customSandwich) { super(customSandwich); } //inheritance: SandwichDecoratorbol szarmazunk le, composition: beadjuk neki az instanceot
+  public String make() { return customSandwich.make() + addMeat(); /hozzaadjuk az uj funct
+  private String addMeat() { return " + turkey";
+public class DressingDecorator extends SandwichDecorator { ... } 
+
+main() { Sandwich sandwich = new DressingDecorator(new MeatDecorator(new SimpleSandwich())); sout(sandwich.make());
+egy decorator atvehet egy masik decoratort ill magat a sandwichet is
+ugy tunhet mintha creational pattern lenne, mert konstruktorokon keresztul megy. de ami tenylegesen tortenik h uj funct adunk hozza az alaphoz (i.e. modositjuk a structjat, ezert structural), a konstruktor csak techn eszkoz (inheritance + composition)
+
+pitfalls
+new class for every feature added. nem kell extendalni a concrete objt helyette viszont uj decoratort kell impl
+multiple little objs
+often confused with simple inheritance (unique way to add func without adding concrete objs for every feature, rather create a decorator and don't mess up inheritance hier of concrete objs)
+
+decorator vs composite: ld composite-nal
+
+original obj can stay the same, we don't have to create concrete objs to add func, we can utilize the decorator to do that
+
+===
+[Facade Pattern]
+
+simplified iface to a complex sys (which often has a poorly designed API)
+
+concepts
+make an API easier to use: hide details from the client
+reduce dependencies on outside code
+simplify the iface or client usage
+usually a refactoring pattern
+pl: java.net.URL, javax.faces.context.FacesContext
+
+design
+class that utilizes composition
+shouldn't have a need for inheritance (ha megis ugy erezzuk akkor valszeg egy masik pattern)
+typically encompasses full lifecycle of the obj (de ez nem szuksegszeru a pattern korrekt hasznalatahoz)
+
+URL url = new URL(...); BufferedReader in = new BufferedReader(new InputStreamReader(url.openStream())); String inputLine; while((inputLine = in.readLine()) != null) sout(inputLine);
+csak egy openStream()-et hivunk, es elvegez mindent a hatterben: open/close conn, make sure we get formatted info, handling streams on the backend etc (aztan bele van wrappelve a readerekbe, ami jo pelda a decoratorra)
+
+demo
+JDBC facade nelkul
+main() { DbSingleton; abbol Connection; abbol harom Statement (CREATE TABLE, INSERT INTO, SELECT); ... }
+
+public class JdbcFacade {
+  DbSingleton instance = null; public JdbcFacade() { instance = DbSingleton.getInstance(); } 
+  public int createTable() { Connection; Statement; exec; } 
+  public int insertIntoTable() { ... }
+  public List<Address> getAddresses() { Connection; Statement; exec; Address POJOk kitoltese RS-bol } 
+client igy nem tud a DBSingletonrol, a conn gettelesrol, az execelt SQL-ekrol (persze a metodusok megkaphatnak az SQL-t argkent h altalanosak legyenek, de most nem ez a fontos)
+  
+main() { JdbcFacade jdbcFacade = new JdbcFacade(); jdbcFacade.createTable(); jdbcFacade.insertIntoTable(); List<Address> addresses = jdbcFacade.getAddresses();
+
+pitfalls
+typically used to clean up code (ami valszeg poor/incorrect design volt)
+should think API design: ha uj API-n akarjuk hasznalni akkor gondolkozzunk el azon h nem tudjuk-e vhogy ertelmesen atdesignolni azt amit el akarunk hideolni a facade-al
+deals with flat problem/struct: tip uses no inheritance
+"singleton of structural patterns": often misused or overused, mert olyan egyszeru impl
+
+facade vs adapter
+facade: simplifies iface; works with composites; cleaner API
+adapter: also a refactoring pattern; modifies (adds) behav vs facade: only behav cleanup; provides a different iface (adapter: tries to make an API/iface more current; facade: tries to make API easier to work with)
+
+===
+[Flyweight Pattern]
+
+minimizes mem use by sharing data with similarly typed objs
+
+concepts
+more efficient use of mem
+large nr of similar objs
+especially for stateless/immutable objs
+possible when most of the obj states can be extrinsic (not essential or inherent)
+pl. java.lang.String (immut objs, loaded from string literal pool, that is the flyweight factory/cache. ha van caching az alt hint arra h hasznalhatunk flyweightet), java.lang.Integer.valueOf(int) (+osszes tobbi primitive wrapper hasonloan)
+
+design
+pattern of patterns
+utilizes factory to retrieve flyweight obj after created
+encompasses creation and structure of the obj (creational pattern inside structural pattern). can and often does manage the lifecycle of the obj
+UML: Client FlyweightFactory-tol requesteli a Flyweight-et (bar gyakran nem is tudja h flyweight amit requestel, csak az ifacet ismeri), ami vagy a cached objt returnoli v uj flyweight instanceot kreal (impl ConcreteFlyweight)
+
+Integer first = Integer.valueOf(5); Integer second = Integer.valueOf(5); Integer third = Integer.valueOf(10); sout(System.identityHashCode(first)); sout(System.identityHashCode(second)); sout(System.identityHashCode(third));
+valueOf(): ha az obj meg nem letezik akkor megkrealja, literal poolba inserteli majd returnoli; tovabbi callok onnantol uezt az objt kapjak. client semmit nem tud arrol h mi tortenik under the hood
+
+demo
+public class Item { private final String name; //+ konstr, toString(). Item instanceok lesznek a flyweightek. immut obj, a name final es nincs setter
+public class Order { private final int orderNumber; private final Item item; /*konstr*/ void processOrder() { sout(...); } //nem tartozik a patternhez, csak consumalja az itemeket az app reszekent
+Orderben extrinsic dolgok vannak, lehet valtoztatni, az Itemben viszont csak intrinsic, azt nem
+
+public class Catalog { //factory es cache az Item flyweight objknak
+  private Map<String, Item> items = new HashMap<>();
+  public Item lookup(String itemName) { if(!items.containsKey(itemName)) items.put(itemName, new Item(itemName)); return items.get(itemName); //factory method
+  public int totalItemsMade() { return items.size(); 
+
+public class InventorySystem { 
+  private final Catalog catalog = new Catalog(); private final List<Order> orders = new CopyOnWriteArrayList<>();
+  public void takeOrder(String itemName, int orderNumber) { Item item = catalog.lookup(itemName); Order order = new Order(orderNumber, item); orders.add(order);
+  public void process() { for(Order : orders) { order.processOrder(); orders.remove(order); } }
+  public String report() { return catalog.totalItemsMade(); }
+  
+main() { InventorySystem ims = new InventorySystem(); ims.takeOrder("SomeKey", 123); ims.takeOrder("SomeOtherKey", 456); ims.takeOrder("SomeThirdKey", 789); /* tovabbi hivasok uerre a 3 keyre */ ims.process(); sout(ims.report());
+a report() csak annyit fog visszaadni ahany kulonbozo item key item van, azaz 3-at. takeOrder() a catalog-ban lookup()-olja a kapott keyt, ami csakkor kreal uj instancet ha a key meg nem volt benne a mapben, egyebkent az existinget returnoli. jelentos perf++ lehet (pl. ha amazonrol mindenki uj instanceot gettelne uabbol az itembol az oriasi mem consumption lenne)
+
+pitfalls
+complex pattern (factory stb.)
+premature optimization
+must understand factory as well
+rengeteg graphical peldat talalunk ra, de nem graphical pattern (ld. pl. inventory mgmtben, shopping cartban vagy barhol ahol sok small obj van)
+
+flyweight vs facade
+flyweight: focused on mem opt; optimization pattern; deals with immut objs
+facade: refactoring pattern (vs flyweight impl upfront); simplified client; provides a different iface for client
+  
+====
+[Proxy Pattern]
+
+iface to sg else
+
+concepts
+iface to an obj by wrapping it with a class
+can add func to the wrapped obj
+problems solved with proxy: security, simplify an iface, remote service call, wrap an expensive-to-create obj
+proxy called to access the real obj
+pl. java.lang.reflect.Proxy (mechanism to facilitate creating proxy patterns using Java), java.rmi.* (focused around proxy)
+
+design
+intermediary obj that intercepts calls
+tip iface based (Spring, Hibernate es egyeb DI/IOC based fwk erosen haszn)
+iface and impl class; proxy resides in between
+Java API: java.lang.reflect.InvocationHandler iface + java.lang.reflect.Proxy class to facilitate
+UML: RealSubject es Proxy a Subject ifacet impljak. Proxy egy InvocationHadlert haszn, interceptalja a Client callt es eldonti h mit csinaljon, pl. toltse be a RealSubjectet v szedje ki vmi cachebol stb (vagy pl. security eseteben denyoljon)
+
+pelda: invoke() metodus, ld. a demo SecurityProxy classban. kul az eddigi pattern peldaktol. appban fogjuk haszn a proxy classt h retrieveljunk egy msgt a twitterrol
+
+demo
+public interface TwitterService { String getTimeline(String screenName); void postToTimeline(String screenName, String message);
+public class TwitterServiceStub implements TwitterService { public String getTimeline(String screenName) { return "my timeline"; } //postToTimeline() impl ures
+
+public class SecurityProxy implements InvocationHandler { //proxy az iface es az impl class kozott
+  private Object obj; private SecurityProxy(Object obj) { this.obj = obj; } //az obj amit a proxyval wrappelunk 
+  public static Object newInstance(Object obj) { return java.lang.reflect.Proxy.newProxyInstance(obj.getClass().getClassLoader(), obj.getClass().getInterfaces(), new SecurityProxy(obj));
+  public Object invoke(Object proxy, Method m, Object[] args) throws Throwable { Object result; try { result = m.invoke(obj, args); } catch(InvocationTargetException e) { throw e.getTargetException(); } catch(Exception e) { throw new RuntimeException("unexpected invoc exc")); } return result;
+egyelore meg nincs benne tenyleges security, csak pass-through method invokolas es eredmeny returnoles
+
+main() { TwitterService service = (TwitterService) SecurityProxy.newInstance(new TwitterServiceStub()); sout(service.getTimeLine("bh5k")); //my timeline
+ 
+stub helyett tenyleges impl
+twitter4j 3rd party jart haszn
+dev.twitter.com, login sajat accounttal; manage your apps, create new app: PluralsightProxy; keys and access tokens: consumer key, consumer secret
+public class TwitterServiceImpl implements TwitterService { public String getTimeline(String screenName) { ...hosszu impl a twitter API es a fenti keyek felhasznalasaval...  } //postToTimeline() impl ures
+main() { TwitterService service = (TwitterService) SecurityProxy.newInstance(new TwitterServiceImpl()); sout(service.getTimeLine("bh5k")); //twitter timelinerol amiben van bh5k
+remote obj hivasa, controllalhatjuk hozza az accesst stb.
+
+jelenleg ha main()-bol meghivjuk service.postToTimeline("bh5k", "some message"); az belemegy a TwitterServiceImpl.postToTimeline() ures implba. ezt fogjuk most letiltani a proxybol
+SecurityProxy invoke()-ba: try { if(m.getName().contains("post")) { throw new IllegalAccessException("Post not allowed"); } else { result = m.invoke(obj, args); } ...
+a business reszt (TwitterServiceImpl) nem kellett modositani hozza, az interceptalasban tiltottuk le (~AOP lehetosegeihez)
+
+pitfalls
+only one proxy (uott kell impl pl. a securityt es auditinget, nem tudjuk separalni, chainelni)
+adds another abstraction layer: can lead to another issues (pl. azt hisszuk h vmi localt accessalunk de valojaban remoteot, lehetnek varatlan hibak)
+similar to another patterns: hard to identify h proxyra van szuksegunk es nem pl. decoratorra v adapterre
+
+proxy vs decorator
+proxy: can add func but not its main purpose; can only have one proxy for that class instance; func set at compile time: determine upfront what class we're trying to call remotely etc.
+decorator: add func dynamically; chained; decorator points to its own type (vs proxy intercepts call to some different subtype); func set at runtime
+(??? "proxy intercepts call to some different subtype". ez a demo szerint igy van hiszen a SecurityProxy-nak es a TwitterService-nek nem volt koze egymashoz; az UML szerint viszont a Proxy uugy a Subject ifacet implja mint a RealSubject ???)
