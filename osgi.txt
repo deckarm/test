@@ -1,8 +1,0 @@
-OSGI: javabban defaultbol nincsenek modulok csak pkgek; az OSGI egy rsz a java folott amivel lehet modularizalni
-fiz egyseg a jar, logikai a META-INF descriptor
-OSGI container: jarokbol bundlek lesznek. meg tudnak sharelni egymassal classokat, rscket, seviceket (exp/imp). runtime tehet be/vehet ki kodot, ezt a java alapbol nem tudja (pl. eclipse pluginek is OSGI containerbe kerulnek be). bundleknak vannak allapotai (started, stopped, resolved). 
-OSGI container csak szabvany, implk Equinox, Knopflerfish stb.
-OSGI container onmagaban keves lehetoseg => Karaf: bundle provisioning (jarok/bundelok betelepitese mvn repobol, filesysbol..), shell, logolas. Karafok clusterezese a Fuse Fabric (Red Hat). Karaf + enterprise sw fejl komponensek az Apache ServiceMix
-mvn bundle plugin: pkging type bundle, legeneralja a META-INF-be a leirot, exp/imp megadhatok
-OSGI-nal minden bundlenak sajat CL => legacy OSGI appban ugy lett volna szep, ha a klf bundlekban hasznalt azonos POJO-kat kiajanlottak volna, de helyette inkabb bundleonket lecopyztak. vs monolit SpringBoot appban 1 CL, amive atportoltak, ott mar nem volt ez a lehetoseg
-OSGI 1 bundle - 1 CL - 1 context, izolaltak. monolit appnal ez nincs, ossze kellett az egeszet vonni egybe
