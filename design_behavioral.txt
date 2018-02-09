@@ -1,0 +1,611 @@
+Design Patterns in Java: Behavioral (Bryan Hansen)
+
+pattern groups: creational/structural/behavioural
+behavioral: focused on how objs interact with one another (try to become more loosely coupled)
+chain of responsibility, command, interpreter, iterator, mediator, memento, observer, state, strategy, template method, visitor
+
+===
+[Chain of Responsibility Pattern]
+
+decouples request from a handling obj in a chain of handlers until it is recognized
+
+concepts
+decouple of sender and receiver objs. requestet akarunk atadni a receiving objnak, anelkul h tudnank ki fogja handlelni; receiver pedig nem tudja h ki volt a sender
+receiver contains ref to next receiver (successor). nem ismeri az egesz hiert csak h ki a kovetkezo
+promotes loose coupling: modifyolhatjuk a chaint, linkeket adhatunk hozza anelkul h az app logicot jelentosen at kellene irnunk
+no handler for a request is OK; app csak megy tovabb
+pl. java.util.logging.Logger.log(), javax.servlet.Filter.doFilter(), Spring Security Filter Chain
+
+design
+chain of receiver objs. tobbfelekeppen is implhato, de a leggyakoribb vmilyen list
+Handler is iface based: chain linkek kozti contractot def
+ConcreteHandler for each receiver/impl that will interpret a request
+each handler has a ref to the next link in the chain/successor (ennek adja tovabb a requestet ha nem tudja h kell processalni)
+
+logger.setlevel(Level.FINER); //level to log at
+ConsoleHandler handler = new ConsoleHandler(); handler.setLevel(Level.FINER); logger.addHandler(handler); //ez egy concretehandler, hozzaadjuk a loggerhez (lehetne tobb is, pl. filelogger stb)
+logger.finest("finest"); logger.finer("finer"); logger.fine("fine"); 
+the various logging methods are passed through a chain and if there is a handler it will log, otherwise it will pass over it 
+itt a chainunk FINER-el er veget, a FINEST-re nem setupoltunk handlert ezert az nem fog kiirodni
+
+demo
+Director bryan = new Director(); VP crystal = new VP(); CEO jeff = new CEO(); //handlerek
+bryan.setSuccessor(crystal); crystal.setSuccessor(jeff);
+Request request = new Request(RequestType.CONFERENCE, 500); bryan.handleRequest(request);
+Request request = new Request(RequestType.PURCHASE, 1000); bryan.handleRequest(request);
+Request request = new Request(RequestType.PURCHASE, 2000); bryan.handleRequest(request);
+
+public abstract class Handler { protected Handler successor; public void setSuccessor(Handler successor) { this.successor = successor; } public abstract void handleRequest(Request request);
+public class Director extends Handler { public void handleRequest(Request request) { if(request.getRequestType() == RequestType.CONFERENCE) { sout("directors can approve conferences"); } else successor.handleRequest(request);
+public class VP extends Handler { public void handleRequest(Request request) { if(request.getRequestType() == RequestType.PURCHASE) { if(request.getAmount < 1500) { sout("VP can approve purchase below 1500"); } else successor.handleRequest(request);
+public class Director extends Handler { public void handleRequest(Request request) { sout("CEO can approve anything");
+a business logic ebben a harom classban van. loose coupling: akar a chain kozepere is berakhatunk egy ujabb handler classt, a tobbi handlerhez pedig nem kell nyulni
+a clientben minden handleRequest() hivas bryan-on van kiadva, es a concrete handler donti el h van-e joga approvolnia azt a requestet v tovabb kell adnia a successoranak; a client nem fogja tudni h tenylegesen ki approvolt
+
+pitfalls
+handling/handler guarantee: nincs garancia h vki a chainben handlelni fogja a requestunket
+ez a runtime configurationbol kovetkezik: ez nagyon flex, de lehet h vmi nem lett rendesen letesztelve es ezert vmi nem lesz processalva
+chain length/perf issues: tul sok handler hozzaadasa perf-- lehet (de szerzo tapasztalata szerint ez gyak nem issue) v confuse h pontosan hol is van az a business logic a chainben
+
+chain of resp vs command
+chain of resp: each handler should be unique; handler knows his successor (doesn't know about other commands surrounding it); can utilize the command pattern in its impl of concrete handlers
+command: command is also unique; encapsulates all of its functionality (doesn't hand it off to someone else if it doesn't know what to do with it); reversible or trackable in nature (often store a history of commands); bar a pattern ezt nem enforcolja de alt azert hivunk meg egy commandot mert tudjuk h handlelni fogja (vs chain of respnel csak assumolni tudjuk h vki a chain soran ezt majd megteszi)
+
+===
+[Command Pattern]
+
+lets you encaps each request as an obj
+
+concepts
+encapsulates each request as an obj: nagy sysben a business logic complex es nehezen debuggolhato lehet ha minden egy fileban van
+minden callback request object oriented es nem csak egy ujabb metodus hozzaadva egy novekvo classhoz
+sender decoupled from processor: maintainability++. sys flex++
+often used for "undo" func: az egesz request a commandon belul van es rollbackelheto
+pl: java.lang.Runnable impljai, javax.swing.Action impljai
+
+design
+obj per command. neha vitatjak h ezzel nem breakeli-e az OO principleket. a command egy verb, az objk pedig alt nem verbek, hanem a bennuk levo metodusok azok
+Command iface. concrete commandok ezt impljak. legegyszerubb formajaban csak egy execute() metodus van benne; ebben van minden action performolva. ez providolja a structuret h az invoker abstractly executolni tudja a concrete commandokat
+undo func eseten van unexecute() metodus is
+a pattern advanced impljai reflectiont haszn, h teljesen decouploljak a clientet a receivertol/processortol egy callbackkel
+receiverben action() metodus, amelyen az execute command performolodik. client nem az action()-t hivja direktben (action decoupled from client) hanem az invokerel dolgozik egyutt a command kiadasa erdekeben
+
+Task task1 = new Task(10,12);  Thread thread1 = new Thread(task1); thread1.start();
+class Task implements Runnable { int num1, num2; public Task(num1,num2); public void run() { sout(num1 * num2);  //a run() az execute metodus, a receiver pedig lenyegeben a console mert a sout oda ir ki
+request teljesen encapsulalva van a Task obj altal, atadjuk a paramokat a Task-nak, es ez a komplett request
+Runnable iface (ez a command iface) egy impljat adjuk at Threadnek (ez az invoker, amely invokolja az execute metodust a taskonkun). request teljesen decouplolva van a processortol
+
+demo
+public interface Command { void execute(); 
+public class Light { //receiver
+  public void on() { sout("light on"); } public void off() { sout("light off"); }
+public class Switch {  //invoker
+  public void storeAndExecute(Command command) { command.execute(); //store and execute kulon is tortenhet, de ez most egyszeru pelda
+public class OnCommand implements Command { //concrete command. receivert/callbacket kap
+  private Light light; public OnCommand(Light light) { this.light = light; }
+  public void execute() { light.on(); } //callback to the light obj
+main() { Light light = new Light(); Switch lightSwitch() = new Switch(); Command onCommand = new OnCommand(light); lightSwitch.storeAndExecute(onCommand);
+client a commandot hivja, es nem light.on()-t direktben. command managelhet statet, undozhat stb
+
+ebben meg nincs state; de a commandban es a receiving objban is lehetne
+public class Light { private boolean isOn = false; public void toggle() { if(isOn) { off(); isOn = false; } else { on(); isOn = true; }
+public class ToggleCommand implements Command { 
+  private Light light; public ToggleCommand(Light light) { this.light = light; }
+  public void execute() { light.toggle(); } 
+main() { Light light = new Light(); Switch lightSwitch() = new Switch(); Command toggleCommand = new ToggleCommand(light); lightSwitch.storeAndExecute(toggleCommand); lightSwitch.storeAndExecute(toggleCommand); lightSwitch.storeAndExecute(toggleCommand); 
+tobbx egymas utan hivva on/off kapcsolgatja a lightot. nem kell hozza tobb command obj, es az obj stateje a receiveren belul van es "in conjunction with the command". maga az app stateless 
+
+demo: macro
+main() { Light bedroomLight = new Light(); Light kitchenLight = new Light(); Switch lightSwitch() = new Switch(); /***/ List<Light> lights = new ArrayList<>(); lights.add(bedroomLight + kitchenLight); Command allLightsCommand = new AllLightsCommand(lights); lightSwitch.storeAndExecute(allLightsCommand);
+public class AllLightsCommand implements Command {
+  private List<Light> lights; public AllLightsCommand(List<Light> lights) { this.lights = lights;
+  public void execute() { for(Light light: lights) light.toggle();
+igy egyszerre vezerli a lakasban levo osszes lampat
+de ha main()-be a *** helyere berakunk meg pluszban egy Command toggleCommand = new ToggleCommand(bedroomLight); lightSwitch.storeAndExecute(toggleCommand); akkor abbol egy weird state lesz (kiirva "on,on,off" lesz)
+a commandnak es a receivernek egyutt kell mukodnie h assessaljak a statet amiben az objk vannak
+
+public class Light { public boolean isOn() { return isOn; } 
+public class AllLightsCommand implements Command { public void execute() { for(Light light: lights) { if(light.isOn()) light.toggle(); }
+igy lefuttatva a bovitett main()-t mar figyel arra h egy light milyen allapotban van (kiirva "on, off" lesz)
+
+pitfalls
+dependence on other patterns: nem szuksegkeppen rossz csak tobb knowledget igenyel a developertol
+multiple commands: gyakran foloslegesen duplikaljak a logicot egy masik commandban; jobb lenne composite-al vagy chain of resppel kombinalni oket
+undo funchoz: make use of memento
+prototype for creating copies of commands to store in a list
+
+command vs strategy
+command: obj per command or per request; the class contains the "what" (what we're trying to do); encapsulates the entire action; deals with this one exact scenario
+strategy: obj per request with the focus on this pattern being per strategy; focuses on the "how" rather than the "what"; encapsulates the algo
+structjuk nagyon hasonlo
+
+===
+[Interpreter Pattern]
+
+repr the grammar of a language
+
+concepts
+represent grammar (music notation , maths euations, another language). compilers use interpreter to parse source code
+use it to interpret a sentence
+map a DSL
+AST
+pl. java.util.Pattern (repr a compiled regexp), java.text.Format (local-sensitive content(dates, numbers, strings))
+
+design
+AbstractExpression: declares iface for executing an operation
+operation: interpret() metodus
+expressions are broken into TerminalExpressions, which repr a leaf of a tree or an expr that does not contain other expr
+NonTerminalExpression: if it contains other expr. represents compound expressions and can tip call itself recursively until it finally repr a TE or multiple subexpressions
+UML: client builds the sentence of TE and NTE instances. context contains global info. TE can be evaluated in their current form, NTE will be interpreted again (llop back to AE where we can call ourselves recursively until its broken down into TEs
+
+String input = "Lions and tigers and bears"; Pattern p = Pattern.compile("(lion|cat|dog|wolf|bear|human|tiger|liger)"); Matcher m = p.matcher(input); while(m.find()) sout("found " + m.group());
+a string a sentence, a pattern pedig a grammar for that sentence. a whileban interpreteljuk a sentencet, es kiirjuk h mit parsoltunk a pattern segitsegevel
+figyeljunk h case-sensitive: "Lion" igy nem lesz talalat, csak a "tiger" es a "bear". mert ez a grammar nagyon specific; persze lazithatnank rajta
+fontos: az interpreter pattern magaval a parsolassal lenyegeben nem fogl (h while-al v for-ral csinaljuk stb.); amit csinal: establishing and interpreting a grammar
+
+demo
+main() { String context = "Lions"; Expression define = buildInterpreterTree(); sout(context + " is " + define.interpret(context));
+static Expression buildInterpreterTree() { Expression terminal1 = new TerminalExpression("Lions"); return terminal1;
+
+public interface Expression { public boolean interpret(String context);
+public class TerminalExpression implements Expression { private String data; public TerminalExpression(data); public boolean interpret(String str) { //StringTokenizerrel csekkeli h benne van-e str
+ez igy mar mukodik es a kimenet "Lions is true"
+build context, build interpreter tree, define/run context through our grammar to see what matches
+
+adjunk hozza NTE-ket (compound expr-ket)
+public class OrExpression implements Expression { private Expression expr1,expr2; public OrExpression(expr1, expr2); public boolean interpret(String context) { return expr1.interpret(context) || expr2.interpret(context);
+AndExpression hasonloan
+
+buildInterpreterTree()-hez adjuk hozza: Expression terminal2 = new TerminalExpression("Tigers"); Expression terminal3 = new TerminalExpression("Bears"); Expression alternation1 = new AndExpression(terminal2, terminal3); /* Tigers and Bears */ Expression alternation2 = new OrExpression(terminal1, alternation1); /* Lions or (Tigers and Bears) */ return new AndExpression(terminal3, alternation2);
+main()-ben valtoztassuk meg a context-et
+String context = "Tigers"; => Tigers is false; 
+String context = "Lions Bears"; => Lions Bears is true
+String context = "Tigers Bears"; => Tigers Bears is true
+
+uugy epithetnenk syntax treet matematikai kifejezesekre, muveleti jeleket, zarojeleket stb. keresve. nem kell hozza osszetett if/else/switch struktura 
+
+pitfalls
+complex grammar mellett nehez maintainelni (ez mar akar a fenti or-oknal es and-eknel is kezdett latszani)
+min 1 class per rule; minden uj expr uj classt jelent. complex ruleokhoz tobb class, maint++
+use of other patterns might help with your specific impl of a complex interpreter
+adding a new variant requires us to change every variant of that class
+specific to the problem we try to solve (limited use outside of it)
+
+interpreter vs visitor (~ structure but different impl focus)
+interpreter: has access to properties because it contains the obj; functions are defined as methods (since we extend/impl the base iface, each interpret function is contained within a method); adding a new functionality changes every variant (ld demo compound expressions)
+visitor: needs observer functionality to gain access to the properties; functionality is in one place (~interpreter) but it is in the visitors and not in the expr objs we're building; adding a new varian requires changing every visitor
+focus of choosing one or another is whether you are adding more exprs/grammar rules or adding new visitors to interact with
+
+===
+[Iterator Pattern]
+
+providing navigation without exposing the struct of an obj
+
+concepts
+traverse a container
+doesn't expose the underlying struct of the obj that we want to navigate
+decouples data from the algo used to traverse it (various structs may have diff algos/approaches to cycle through the data)
+sequential in nature. not all objs have a seq set of data, but the iterator handles the navigation in an order that best repr its sequence
+pl. java.util.Iterator, java.util.Enumeration (predated Iterator, now is just a copy of it)
+
+design
+iface based. whichever obj you want an iterator over, will provide a method to return an instance of an iterator from it
+follows a sort of factory method pattern to get an instance of the iterator
+each iterator indep from the others; but fail fast: two iterators can't modify the underlying obj without an error being thrown
+enumerators are fail safe: can't be used to fail (fail fast es fail safe mellett is vannak ervek: Java API-ban az elobbi mellett dontottek)
+
+List<String> names = new ArrayList<>(); names.add(...); Iterator<String> namesItr = names.iterator(); while(namesItr.hasNext()) { String name = namesItr.next(); sout(name); namesItr.remove(); } sout(names.size());
+itt modifyoljuk is az original listet a remove()-al, size a vegen 0 lesz
+
+a foreach loop egy iterator instanceot hasznal behind the scene; nem kell explicit megkrealni az iteratort es hasNext/next-elni mint a while-nal: for(String s:names) sout(name); 
+itt nincs az index sem exposolva mint a hagyomanyos for(int i =0...) { names.get(i)...} eseteben. es ha a names nem list hanem pl. set lenne, akkor a names.get(i) nem is mukodne
+
+demo
+public class BikeRepository implements Iterable<String> { //targetje lehet foreach-nek
+  private String[] bikes; private int index; public BikeRepository() { bikes = new String[10]; index = 0;
+  public void addBike(String bike) { //ha elertuk a bikes.length-et, akkor megnoveli a meretet
+  public Iterator<String> iterator() { 
+    Iterator<String> it = new Iterator<>(){ 
+      private int currentIndex = 0;
+	  public boolean hasNext() { return currentIndex < bikes.length && bikes[currentIndex] != null; }
+	  public String next() { return bikes[currentIndex++]; }
+	  public void remove() { throw new UnsupportedException(); //ki kell nullozni a megfelelot, aztan resizolni az arrayt hasonloan mint az addBike()-nal; ezt most skippeli mert a pattern szempontjabol nem erdekes
+    };
+	return it;
+
+main() { BikeRepository repo = new BikeRepository(); repo.addBike(3x); Iterator<String> bikeIterator = repo.iterator(); while(bikeIterator.hasNext()) sout(bikeIterator.next()); 
+mehetne for(String bike:repo)-val is. nem exposoltunk indexet az objra
+
+pitfalls
+don't have access to index. ha egy adott posban levo elemet akarunk akkor nincs mas mod mint eliteralni odaig es ott megallni. es mint lattuk a set-nel (es map-nel se) nincs metodus amivel egy adott posbeli elemet ki tudunk gettelni
+a base iface unidirectional, can only go fwd. vannak implk amik bidir accesst nyujtanak (pl. list iterator)
+legtobb esetben az iterator a most efficient solution egy objn valo loopolasra, de egyes esetekben kicsivel lassabb lehet mint indexszel loopolni (nagy obj collnal szinte mindig az iterator jobb)
+
+iterator vs for loop
+iterator: iface based; helps us to remove the traversal algo from the client (ld. demo: az algo a repository classon belul volt, ott volt az index trackeles, navigalas stb.); no index available (de ez alt nem issue, foleg ha olyan collon iteralunk ahol nem is lehet adott indexrol gettelni); helps with conc modif
+for loop: pushes all traversal code to the client; exposes an index (hasznalattol fuggoen lehet elonyos v nem); doesn't change the underlying obj; doesn't allow to work with the foreach syntax (foreach syntaxhoz olyan obj kell ami Iterable ifacet impl); tip slower in most situations
+
+===
+[Mediator Pattern]
+
+define how objs interact with one another without having them refer to each other explicitly
+
+concepts
+need to achieve loose coupling between objs
+we have a set of well defined objs that comm in complex ways
+often there's spaghetti code between objs which make loose coupling seem impossible and makes it tough to create reusable components because of inter-obj comm
+acts as a hub/router in the app
+pl. java.util.Timer (mediates through schedule methods), java.lang.reflect.Method.invoke() (mediate objs that we're reflecting upon)
+
+design
+iface based with a concrete class (lehet csak classal implni, de az iface lehetove teszi "cycling out the various mediators based on the situation" (?). ezt tip azert akarjuk h mas viselkedes lehessen a klf deploy platformokon)
+minimizes inheritance in the app (because it is handling the comm rather than classes inheriting func)
+mediator knows about all the colleagues (rather than colleagues knowing about each other)
+
+public MediatorEverydayDemo(int seconds) { toolkit = Toolkit.getDefaultToolkit(); timer = new Timer(); timer.schedule(new RemindTask(), seconds * 1000); timer.schedule(new RemindTaskWithoutBeep(), seconds * 2 * 1000);
+class RemindTask extends TimerTask { public void run() { sout("time is up"); toolkit.beep();
+class RemindTaskWithoutBeep extends TimerTask {  public void run() { sout("time is really up"); timer.cancel();
+main() { new MediatorEveryDemo(3);
+beschedulalhatunk complex dolgokat vegzo taskokat, anelkul h kommunikalniuk kellene egymassal. egymastol teljesen fgtl futnak, anelkul h hardcodeolni kellene oket egymasra mutato refekkel
+
+demo
+command patternnel latott problemat fogunk megoldani a mediator segitsegevel
+public interface Command { void execute(); } //colleague
+public class Mediator {
+  private List<Light> lights = new ArrayList<>();
+  public void registerLight(Light light) { lights.add(light); }
+  public void turnOnAllLights() { for(Light light: lights) if(!light.isOn()) light.toggle();
+az objk controllaljak a sajat statejuket, de a mediator megy vegig es donti el h meghivja-e v sem
+
+public class TurnOnAllLightsCommand implements Command { //concrete
+  private Mediator med; public TurnOnAllLightsCommand(Mediator med) { this.med = med; } //korabban itt az obj allt, amit meghivott (light/list of lights)
+  public void execute() { med.turnOnAllLights();
+
+main() { Mediator mediator = new Mediator(); Light bedroomLight = new Light("bedroom"); Light kitchenLight = new Light("kitchen"); mediator.registerLight(bedroomLight); mediator.registerLight(kitchenLight); Command turnOnAllLightsCommand = new TurnOnAllLightsCommand(mediator); turnOnAllLightsCommand.execute();
+kimenet: bedroom light switched on, kitchen light switched on
+hasonloan lehet krealni egy TurnOffAllLightsCommand classt is
+a commandok tovabbra is azt csinaljak amit a commandoknak kell, es a mediator kezeli az aggregatet (compound commands). itt tulkepp a ket pattern egyuttes hasznalata tortenik, szerzo ezt preferalja. client kod szerinte igy egyszerubb es erthetobb (pl. nincs list of lights amit fel kell tolteni, csak a mediatorra kell registralni es aztan azt beadni a commandnak)
+
+pitfalls
+don't create a deity obj (can become large rather quickly)
+can limit subclassing (can provide various mediators for various situations, but those are usually used for platform differences)
+over or with command pattern? (ld. demo)
+
+mediator vs observer
+medaiator: defines how objs interact with one another; intent is to decouple objs (by eliminating refs to each other and just have a ref to the mediator); more specific
+observer: one-to-many broadcast (broadcasts to all listeners; they choose whether they want to do sg with it); also focuses on obj decoupling (in a different way, using the broadcast); more generic (adding this feature requires just becoming another listener rather than modifying the mediator)
+
+===
+[Memento Pattern]
+
+externalize an obj's state usually to provide rollback func
+
+concepts
+restore obj to previous state
+externalize obj's internal state, so that obj can be returned to it later (be careful not to vio encaps)
+tip use to impl undo/rollback func
+shields complex internals from other objs
+pl. java.util.Date (internally repr by a long value, so we can return the date obj to its previous tate by setting it back), java.io.Serializable (allows to impl any obj to have its state recreatable)
+
+design
+class based
+originator: the obj that we want to create a copy/safepoint of (creates an actual memento of itself)
+caretaker: manages the created copies/mementoes (~list of undos available in your menu). knows why and when the originator needs to be saved and how to restore itself
+memento: repr the copy of the originator that we want to store
+magic cookie: the combination of fields that it takes to recreate/copy the state of the obj and then it is stored inside the memento (it isn't an actual obj)
+
+public class Example {
+  main() { Employee emp = new Employee(); emp.setXXX(...); serialize(emp); Employee newEmp = deserialize(); sout(newEmp.getXXX());
+  private static void serialize(Employee emp) { //fileba menti
+  private static Employee deserialize() { //filebol visszaolvassa es returnoli
+public class Employee implements Serializable { //csak fieldek + getterek
+ebben a peldaban nincs caretaker. az originator az Employee, a memento pedig a serialized obj
+
+demo
+public class Employee { String name, phone, address; +getterek/setterek //originator. most nem impl a Serializable-t
+public class EmployeeMemento { 
+  private String name, phone; + konstruktor //addresst nem tesszuk bele a mementoba (~Serializable trasient)
+  //csak getterek kellenek; state setteleset a konstruktorral csinaltuk
+Employee-ba a kovetkezo plusz metodusok
+  public EmployeeMemento save() { return new EmployeeMemento(name, phone, address);
+  public void revert(EmployeeMemento emp) { this.name = emp.getName(); this.phone = emp.getPhone();
+public class CareTaker {  
+  private Stack<EmployeeMemento> employeeHistory = new Stack<>(); //lehetne pl. List is, de a save/revert az tulkepp push/pop-olas mint stacknel
+  public void save(Employee emp) { employeeHistory.push(emp.save());
+  public void revert(Employee emp) { emp.revert(employeeHistory.pop()); //ref association. pass the Employee obj in, keep hold of the ref and change the values inside it. ezert jo a stack mert csak ki kell grabbelni belole az elozo statet es azzal revertalni az objt
+  
+main() { 
+  Caretaker caretaker = new Caretaker(); Employee emp = new Employee(); emp.setXXX(name,address,phone); sout("before save: " + emp); caretaker.save(emp);
+  emp.setPhone(...); caretaker.save(emp); sout("after phone change" + emp);
+  emp.setPhone(...); /* itt nem hivunk save-t! */ caretaker.revert(emp); sout("revert to last save point:" + emp);
+  caretaker.revert(emp); sout("revert to original:" + emp);
+van egy full historynk az objrol
+
+pitfalls
+can be expensive (ha az originatorban sok data akkor minden copyval jo nagy overhead lesz)
+caretaker (although might be lightweight/simple) needs to consider how much of the history it should keep/delete
+have to be careful not to expose originator info. state needs to be transitioned to the memento but not outside of there (peldankban accessor metodusok voltak, de nem conveyeltuk a statet mas objnak csak a mementonak)
+
+memento vs command
+memento: used to capture state; each state is indep so that we can rollback or recreate it in the future; create a history with the caretaker obj
+comand: focused on request rather than state of an obj; focused on indep request; people often impl command without thinking of history (the option is available but is just a side benefit)
+szerzo szerint majdnem azonosak, a history focust leszamitva
+
+===
+[Observer Pattern]
+
+decoupling pattern, subject needs to be observed by one or more observers
+
+concepts
+a subject has one-to-many observers
+try to decouple objects
+often used for event handling
+also referred as publisher/subscriber (vita: observer tip sync a pub/sub viszont tip async)
+often used in MVC situations where view is event driven
+pl. java.util.Observer, java.util.EventListener (base iface for virtually every event listener in AWT/Swing), javax.jms.Topic
+
+design
+subject: needs to be observed (tip iface/abstract class that we make concrete impls of)
+observers registers (attach/detach) themselves to the subject (observer is iface based with concrete impls)
+in java.util the subj impls the Observable iface
+concrete observers are tip views in an event-driven app
+
+UML
+subject.notify() cycles through each registered observer calling its update() method
+concrete subject: state, that the observers want to be notified about
+observer iface: decouple observers from the subject; we handle everything uniformly and consitently through the iface
+concrete observers: impl of the observer iface; act upon the changes in the subject (tip views in the app)
+
+main() { TwitterStream messageStream = new TwitterStream(); Client client1 = new Client("Bryan"); Client client2 = new Client("Mark"); messageStream.addObserver(client1); messageStream.addObserver(client2); messageStream.someoneTweeted();
+class TwitterStream extends Observable { //concrete subject (observable), ennek statejet akarjuk observelni
+  public void someoneTweeted() { setChanged(); notifyObservers(); //setChanged() jelzi az observernek h state change volt. notifyObserver() hivja az observerek update() metodusat
+class Client implements Observer { // concrete observer
+  private String name; Client(String name) { this.name = name; }
+  public void update(Observable o, Object arg) { sout("update " + name + "'s stream, someone tweeted sg");
+megvalosul a loose coupling; krealtunk egy subjectet es ket observert, registraltuk oket, aztan pedig modositottuk a subject state-jet, es mentek a notifyok az observereknek
+problemak: az observerek nem tudnak semmit a concrete subjectrol amit observelni probalnak; nem tudjuk grabbelni az obj instancet h lassuk mi valtozott + main-ben egy kicsit sokat kell wireupolni. demoban megmutatjuk hogyan lehet ezeket kikuszobolni ha nem a built-in java.util elemeket hasznaljuk
+
+demo
+main() { Subject subject = new MessageStream(); PhoneClient phoneClient = new PhoneClient(subject); phoneClient.addMessage("new message");
+
+public abstract class Subject {
+  private List<Observer> observers = new ArrayList<>();
+  abstract void setState(); abstract String getState(); //concrete subjects will impl
+  public void attach(Observer observer) { observers.add(observer);
+  public void detach(Observer observer) { observers.remove(observer);
+  public void notifyObservers() { for(Observer observer : observers) observer.update();
+
+public abstract class Observer { protected Subject subject; abstract void update(); //observer. van benne egy ref a subjectre, ami a java.util-nal nincs; igy tudunk getstate-lni
+public class PhoneClient extends Observer { //concrete observer
+  public PhoneClient(Subject subject) { this.subject = subject; subject.attach(this); //beadjuk az observelt subjectet, es attacholjuk hozza magunkat (java.util-nal ez mind a main-ben tortent, itt most a tenyleges viewk/clientek maguk intezik ezt)
+  public void addMessage(String message) { subject.setState(message + " sent from phone");
+  void update() { sout("phone stream: " + subject.getState());
+  
+public class MessageStream extends Subject { //concrete subject (observable)
+  private Deque<String> messageHistory = new ArrayDeque<>();
+  void setState(String message) { messageHistory.add(message); this.notifyObservers(); }
+  String getState() { return messageHistory.getLast(); }
+messagek addolasa modositja a subject statet, es igy triggerelodik a notifyObservers()-en keresztul az observerek update()-je
+
+kimenet "phone stream: new message sent from phone" lesz
+main: addMessage(msg) => PhoneClient (concrete observer): subject.setState(msg) => MessageStream (concrete subject): messageHistory.add(msg), this.notifyObservers() => Subject (subject): loop observer.update()
+nem hivjuk meg direktben az update()-t a main-bol, az observer-subject contracton keresztul hivodik
+
+uigy krealhatunk egy TabletClient classt, masik concrete observerkent. main-be TabletClient tabletClient = new TabletClient(subject); tabletClient.addMessage("another message");
+kimenet: "phone stream: new message sent from phone", "tablet stream: new message sent from phone", "phone stream: another message sent from tablet", "tablet stream: another message sent from tablet"
+objk nem tudnak egymasrol (phone nem tudja h a tablet updatelte a twitterunket), a komm a subjecten keresztul tortenik ~ mediator
+
+osszehasonlitva a java.util-os megoldassal, itt a main-nek nem kell tudnia az observer-subject registralasrol, es a subjecten keresztul valo kommunikalasrol
+miert kellene a subjecttel direktben kommunikalnunk? ha a telefonunkat/tabletunket hasznaljuk akkor nem kell odamennunk a desktophoz h updateljuk a twittert
+
+pitfalls
+subject nem tud az observereirol: unexpected updates (an obj can notify that it has changed without knowing what has changed)
+large update consequences: if an obj is large and we triggered an update that forces the change, there can be perf--, even though we may not necessarily want to update (pl. notifying a change on a file; ha minden alkalommal egy 100M filet copyznank amikor vmi updatelodott az nem lenne tul jo)
+not knowing what has changed, with this disconnected system it can be confusing as to what changed in the subject that signified such event to be updated
+disconnected nature makes debugging difficult
+
+observer vs mediator
+observer: one subject to many observers; used to decouple an obj from those who want to watch it; broadcast (pub-sub) comm mechanism
+mediator: one-to-one-to-many model (obj talks to the mediator, mediator is in charge of comm with other objs); also used for decoupling but usually for handling complex comm in a more direct model than pub-sub
+mediator can be implemented with an observer in the notif mechanism. the mediator would be part of the subject; a twitter peldaban a main egy mediatorral kommunikalna ami aztan observeren keresztul broadcastolna
+
+===
+[State Pattern]
+
+used when we need to repr state in an app
+
+concepts
+localize state-specific behav
+current app state stored in an obj and not a mix of vars across the app
+separates "what state we are in" from "where we are at in the app"
+makes our obj follow OCP (class is closed for changes but the states are open for extensions)
+pl. core API-ban nincs jo pelda; JSF (lifecycles, phases); egyesek szerint az Iterator implk is a state impljai (can change obj behav at runtime based on its state) de a szerzo szerint nem
+
+design
+abstract class/iface based (inkabb abstract class because the various states the obj can be in, don't necessarily apply to every instance of the State class, and are rather just a default impl)
+each state is class based and repr by an indiv concrete class per state
+context/subject which has multiple states, is unaware of various states using this pattern, where before it knew all those pieces (before the state pattern one obj had a very large if-then-else diagram in it that went thorough all cases possible in the app; with the state pattern its externalized into each condition being its own state class)
+UML: context requests passed through state iface/abstract class. for each app state there is a concrete state
+az if-elsek eltavolitasaval segit a cyclomatic complexityt csokk
+
+class Fan { final static int OFF = 0, LOW = 1; int state = OFF; public Fan() {} public void pullChain() { if(state == OFF) { sout("turning on to low"); state = LOW; } else if(state == LOW) { sout("turning off"); state = OFF; } public String toString() { if(state == OFF) return "is off"; else if(state == LOW) return "is on low"; } 
+main() { Fan fan = new Fan(); sout(fan); fan.pullChain(); sout(fan); fan.pullChain(); sout(fan);
+mivel Java API-ban nincs state pattern, gyakran igy konstansokkal adjak meg a stateket az appokban
+"is off", "turning on to low", "is on low", "turning off", "is off"
+ha hozzaadunk egy MEDIUM statet, az ujabb else if blokkot jelent a pullChain() es a toString() metodusokban is, es ez igy nagyra nohet
+
+demo 
+public abstract class State { public void handleRequest(){ sout("shouldnt be able to get here")}; } //fan peldaban most csak egyfajta requestunk van (a mukodes off -> low -> medium -> high -> off), de domaintol fuggoen lehetne tobb is
+public class Fan {
+  State fanOffState, fanLowState, fanMediumState, fanHighState; //removoltuk a konstansokat
+  State state;
+  public Fan() { fanOffState = new FanOffState(this); /* fanLowState(this) stb. */ state = fanOffState; } //korabban a konstr ures volt 
+  public void pullChain() { state.handleRequest(); } //removoltuk az if-else-ket
+  public String toString() { return state.toString(); } //removoltuk az if-else-ket
+  public State getFanLowState() { return fanOffState; } //uigy getFanMediumState() stb.
+  public void setState(State state) { this.state = state; }
+    
+public class FanOffState extends State {
+  private Fan fan; public FanOffState(Fan fan) { this.fan = fan; }
+  public void handleRequest() { sout("turn on to low"); fan.setState(fan.getFanLowState()); } //miert nem krealunk egy uj FanLowState instanceot ahelyett h a Fan-bol getteljuk? the state machine knows about the different states that it can be in but the individual states only know about the one that they can transition to
+  public String toString() { return "is off"; } 
+FanLowState, FanMediumState, FanHighState classok uigy
+state objs all contain what they do, none of it is contained in the state machine itself
+main/client egyaltalan nem valtozott, all fixing happened on the backend
+statekben komplexebb dolgok is tortenhetnek mint sout es egy state transition
+
+pitfalls
+we must know all states of the app (and what is needed to repr that state in an obj)
+more classes than if we not impl the pattern (ez nem feltetlenul rossz dolog, hiszen isolatedek, es OCP van)
+keep logic in the state objs, out of the context
+we must know what triggers a state change (in complex apps it is not always easy)
+
+state vs strategy
+state: iface based with a coll of concrete states; state knows only about the next state it can transition to; class per state (each state contained in its own class)
+strategy: focus on algos/strategies instead of state repr; also iface based; don't know about other strategies (algos are indep from each other); class per algo
+legnagyobb diff: client tip knows all of the strategies that are available, but it not necessarily knows all the states it can be in (we can request it but it doesn't assign that upfront like it does with the strategy)
+UML-juk majdnem azonos
+
+===
+[Strategy Pattern]
+
+used when you want the strategy/algo to be selected at runtime
+
+concepts
+eliminate conditional statements from the app
+encaps the algo/behav in individual classes
+use when its difficult to add new strategies/cases into the app
+client tip aware of available strategies
+tip client chooses strategy to be used
+pl. java.util.Comparator (we want to impl various comparison strategies in our app for passing into a sort method)
+
+design
+tip abstract base class (lehet iface is)
+concrete class per strategy. impl the algo which is unique to that strategy
+minimize/eliminate if-else
+client knows about the strategies but strategies not necessarily know about each other
+
+main() { ... Collections.sort(people, new Comparator<Person>() { public int compare(Person o1, Person o2) { ...
+we can swap out the sorting strategy of a coll by implementing a new comparator 
+a Comparator iface a strategy iface, es erre adhatunk concrete implkat ((by name, by age stb.)
+az is latszik ebbol h a client is aware of the strategies
+
+demo
+main() { CreditCard amexCard = new CreditCard(new AmexStrategy()); amexCard.setNumber/Date/Cvv(); sout("is amex valid: " + amexCard.isValid());
+
+public class CreditCard {
+  private String number, date, cvv; /* getterek/setterek */ private ValidationStrategy strategy;
+  public CreditCard(ValidationStrategy strategy) { this.strategy = strategy; }
+  public boolean isValid() { return strategy.isValid(); } //convenience metodus, nem a pattern resze
+ 
+public abstract class ValidationStrategy { 
+  public abstract boolean isValid(CreditCard card);
+  protected boolean passesLuhn(String ccNumber) {...} //some func in the base class that all concrete strategies will utilize
+public class AmexStrategy extends ValidationStrategy {  
+  public boolean isValid(CreditCard creditCard) { //validation logic, pl. AMEX cardok numbere 34-el v 37-el kell kezdodjon, passesLuhn() stb.
+uigy krealhatunk pl. egy VisaStrategy-t
+nem a creditcardban vannak ezek a komplex csekkelesek hanem a strategykben, a creditcard csak a strategyrol tud amit kap. es a clientben is csak a strategyt kell kiswappolnunk
+
+pitfalls
+client aware of concrete strategies (vs state: client didn't have to choose what state it was in; strategies have to be chosen)
+increased nr of classes in the app (alt nem nagy gond mert csak par strategy van egy appban, es a konnyebb app maint miatt ki is fizetodik)
+  
+strategy vs state: ld strategynel
+
+===
+[Template Method Pattern]
+
+define an algo that allows subclasses to redefine parts of the algo without changing its structure
+
+concepts
+good technique for code reuse
+common in designing fws/libs
+IoC containers use it to allow pluggable components inside their fws (pl. Spring JDBC Template). referenced as Hollywood principle ("don't call us we'll call you")
+focus: surrounding the algo of what we are trying to solve (enables us to force an algo but allows pieces to be configured by the user). guarantees algo adherence
+pl. java.util.Collections.sort() (ld.strategy. diff: strategy allowed to swap out the entire comparator; template method focuses on the method to override with sorting), java.util.AbstractList.indexOf()
+
+design
+abstract base class
+base class calls child (not the way around)
+hooks, which may be overridden
+operations, which must be overridden
+UML: abstract class contains the template method that is called by the client + operations (methodOne(), methodTwo()) that must be overridden by the concrete class. concrete class also overrides any optional hooks to fulfill the algo defined in the original template method entry point
+
+example ~ strategynel
+Collections.sort() provides us the operation to override as part of our template method. collections and its base class provide the algo. from here we could impl a Comparator which is example of the strategy pattern, or focus on the compare()/compareTo() methods which are part of the actual template method pattern
+strategynel a Comparatort demonstraltuk, itt a Comparablet fogjuk
+Collections.sort(people); alapbol forditasi hiba, mert a Person nem impl Comparablet. so the sort() is looking for a template method of the Comparable iface to sort them on
+public class Person implements Comparable<Person> { public int compareTo(Person o) {...} //being implemented as part of the template method pattern of the iface. this is implementing the algo. vs strategy: its all contained in this method instead of having a strategy that we swap out at runtime
+
+demo
+main() { OrderTemplate webOrder = new WebOrder(); webOrder.processOrder();
+
+public abstract class OrderTemplate { 
+  public boolean isGift; public abstract void doCheckout(); public abstract void doPayment(); public abstract void doReceipt(); public abstract void doDelivery(); //hooks and operations, could be overridden but not necessarily
+  public final void wrapGift() { sout("gift was wrapped");
+  public final void processOrder() { doCheckout(); doPayment(); if(isGift) wrapGift(); else doReceipt(); doDelivery();} //template method. final, mert nem akarjuk h a subclassok overrideoljak. azt akarjuk h az algo mindig uaz legyen
+  
+public class WebOrder extends OrderTemplate { public void doCheckout() {...} ... //itt overrideolhatjuk a hookokat/operationoket (most csak sout-ok vannak bennuk)
+uigy krealhatunk egy StoreOrder-t, anelkul h a OrderTemplate-t modositanunk kellene, az algo uaz marad
+
+pitfalls
+need to restrict access to certain methods correctly. impl hooks and operations correctly
+can be a confusing class hier. tip in an OO struct we don't interact with an algo across multiple classes; usually objs contain the entire unit of work. with the template method it is purposefully divided across multiple classes
+depending on how many templates we make it can be a difficult prg flow
+
+template method vs strategy
+both focused on the algo
+template method: focused on the same algo but with diff impls; class based (extends the base class and concrete impls just impl pieces or hooks in the algo); chosen at compile time
+strategy: impl the entire algo per strategy; iface (contract) based; always used when you need to pick the algo at runtime (client selects while using the app vs template method we define that beforehand and are aware of what we want to use at compile time
+
+===
+[Visitor Pattern]
+
+separate algo from obj struct
+
+concepts
+iface based (we must design around the visitor from the beginning; its hard to retrofit after the fact)
+app has elements, and these are the pieces that we expect to change and need to add func to over time: impl a visitor in each element
+each element has a visit() method; each visitor knows of every element
+UML: client creates elements. instead of changing the concrete element every time that we want to add func, it has an accept(Visitor) method. the visitor has a visit(ConcreteElement) method for each type of element that we want to interact with. changes take place in the concrete visitors rather than in the elements themselves
+
+PartsOrder order = new PartsOrder(); order.addPart(new Wheel(), Fender(), Oil()); order.accept(new AtvPartsShippingVisitor());
+
+demo
+visitor nelkul
+main() { PartsOrder order = new PartsOrder(); order.addPart(new Wheel(), Fender(), Oil()); sout(order.calculateShipping());
+public interface AtvPart { double calculateShipping(); }
+public class Fender implements AtvPart { public double calculateShipping() {...} } //Wheel, Oil uigy
+public class PartsOrder implements AtvPart { 
+  private List<AtvPart> parts = new ArrayList<>();  public PartsOrder() {}
+  public void addPart(AtvPart atvPart) { parts.add(atvPart); } public List<AtvPart> getParts() { return Collections.unmodifiableList(parts); }
+  public double calculateShipping() { double shippingCost = 0; for(AtvPart atvPart: parts) { shippingCost += atvPart.calculateShipping(); } return shippingCost;
+minden kis modositasnal (pl. nem csak shippingcost?) modifolni kell minden part tipust
+
+visitorral
+public interface AtvPart { void accept(AtvPartVisitor visitor); } //element
+public class Fender implements AtvPart { public void accept(AtvPartVisitor visitor) { visitor.visit(this); } //Wheel, Oil uigy. concrete elements. vannak akik nem szeretik h mindegyikben uaz a visitor.visit(this) impl van, de ez igy mukodik
+
+public interface AtvPartVisitor { void visit(Fender fender); void visit(Wheel wheel); void visit(Oil oil); void visit(PartsOrder partsOrder);
+
+public class PartsOrder implements AtvPart { calculateShipping() helyett public void accept(AtvPartVisitor visitor) { for(AtvPart atvPart : parts) { atvPart.accept(visitor); } visitor.visit(this); //this container builds the whole order and so it refs the other elements (AtvParts) as well as itself as part of the visitor
+nem mi szamoljuk ki a shippinget hanem van egy visitorunk ami vegigmegy mindenen; we just visit ourselves
+
+public class AtvPartsShippingVisitor implements AtvPartVisitor { 
+  double shippingAmount = 0;
+  public void visit(Fender fender) { shippingAmount += 15; } //Wheel, Oil uigy
+  public void visit(PartsOrder order) { List<AtvPart> parts = order.getParts(); if(parts.size() > 3) shippingAmount -= 5; } 
+az egesz algo ebben a classban van es nincs szetspreadelve a kulonbozo elementekbe
+
+main() { PartsOrder order = new PartsOrder(); order.addPart(new Wheel(), Fender(), Oil()); order.accept(new AtvPartsShippingVisitor());
+
+uigy lehet egy AtvPartsDisplayVisitor-t csinalni, ami a visit() metodusaiban csak sout-okat csinal. tobbi classban semmit nem kell modif. main()-ben order.accept(new AtvPartsDisplayVisitor());
+
+pitfalls
+have to plan on adaptability. can lead to overarchitecting the app (we build in flex that is never needed or used)
+the indirection of working with an obj outside of its domain can be confusing
+each visitor may not impl all of the methods; so we might use the adapter pattern => complexity++
+
+visitor vs iterator
+visitor: iface based; focus is on adaptability through externalizing changes (so if we can't change the base API after deploying it, we can add func with visitors without changing what we have inside the app); adding multiple visitors is easy
+iterator: also iface based but tip impl using anon inner class; encapsulates navigation but doesnt necessarily externalize it; although we can impl multiple types of iterator we tip have only one in the app
