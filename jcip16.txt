@@ -1,0 +1,159 @@
+Java Concurrency in Practice
+
+[Chapter 16. The Java Memory Model]
+eddig nem fogl a JMM low-level detailjeivel, hanem higher level designnal, mint safe publ, sync policy specification + adherence. ezek safetyje a JMM-bol szarm; most a JMM low-level requirementjeivel es garanciaival fogl
+
+[[16.1. WHAT IS A MEMORY MODEL, AND WHY WOULD I WANT ONE?]]
+tfh egy thread egy valuet assignol egy varhoz: aVariable = 3;
+mem model megvalaszolja a kerdest: "milyen korulmenyek mellett lat egy aVariablet readelo thread 3-at?". ez azert relevans kerdes mert sync nelkul lehet h egy thread nem latja azonnal (v soha) egy masik thread operjenek eredmenyeit. a compilerek mas orderben generalhatjak az instructionokat mint ahogy a sourceban van, mem helyett registerekben tarolhatjak a varokat; processorok parallel v out of order execelhetik az instructionokat; cachek varialhatjak az ordert ami szerint a var writeok a main membe commitolodnak; proc-local cachekben tarolt valuek lehet h nem visiblek mas procok szamara. ezek miatt egy thread lehet h nem latja egy var up-to-date erteket es sync nelkul mas threadekben out-of-order mem actionok tortenhetnek
+
+single threaded envben a fent emlitett dolgok rejtve maradnak, es hatasuk annyi h felgyorsitjak a prgot. a JLS "within thread as-if-serial" semanticsot-ot kovetel meg a JVM-ektol: addig megengedettek, amig a prg eredmenye uaz mint egy sziguran seq envben futtatva. ez jo mert az ilyen rearrangementek sokat dobnak a perfen
+
+multithreaded envben a seq illuzioja nem tarthato fenn jelentos perf cost nelkul. mivel egy conc appban a threadek legtobbszor a "sajat dolgukkal" fogl, ezert a tulzott interthread koord csak lelassitja a prgt benefit nelkul. csak ha a threadek datat sharelnek, akkor szukseges koord, es a JVM a prgra bizza h sync segitsegevel kezelje amikor ez tortenik
+
+JMM spec a minimalis garanciakat amiket a JVM-nek nyujtania kell amikor a var writeok visiblek lesznek mas threadek szamara. predictabilityt es egyszeru prg developmentet probalja balanceolni a JVM perffel
+
+[[[16.1.1. Platform Memory Models]]]
+shared mem multiproc archban minden procnak sajat cache van, ami periodikusan hangol a main memmel. archtol fuggoen valtozo cache coherence; egyesek csak minimalis garanciakat nyujtanak, es kul procok kul valuekat lathatnak uazon a mem locationon. OS, compiler, runtime (es maga a prg) kell osszehangolja azt amit a hw nyujt, a thread safety requirementekkel
+
+azt bizt h minden proc minden pillanatban tudja h az osszes tobbi proc mit csinal, draga. legtobbszor nem is kell ezert procok lazithatjak a mem-coherence garanciaikat h perf++ legyen. arch mem modelje megmondja a prgnak h milyen garanciakra szamithatnak a mem systemtol, es specifikalja azokat a spec instructionokat (mem barreierek v fencek) amelyek data sharingnal szuksegesek. h elshieldejuk a Java devek elol a klf archok mem modeljeit, a Java sajat mem modelt nyujt, es a JVM kezeli a JMM es az underlying platform mem model kozti eltereseket azaltal h berakja a mem barriereket a megfelelo helyekre
+
+program exec egy jo mental modelje ha elkepzeljuk h van egy order amely szerint a prg operjei tortennek, proctol fgtlul, es h egy var minden readje az exec order szerinti (bmely proc altali) utolso writeot fogja latni. ez az un seq consistency model. ez unrealistic, se procok se JMM nem nyujtja. a klasszikus seq comp model (von Neumann) csak kozeliti azt ahogy a modern multiprocok valojaban muk
+
+vegszo h modern shared mem multiprocok (es compilerek) meglepoen viselkedhetnek ha threadek kozott data sharing van, hacsak meg nem mondjuk nekik h figyeljenek a mem barrierekre. Java prgnak nem kell mem barriereket elhelyeznie, csak azt kell jelezni h shared data access van, sync megfelelo hasznalataval
+
+[[[16.1.2. Reordering]]]
+2-ben a race condok es atomicity failurek leirasanak diagramokon jeleztuk az "unlucky timingot" ahol a scheduler opereket interleavelt, ezaltal helytelen resultokat eredmenyezve nem megfeleloen syncelt prgkban. ezen tulmenoen a JMM megengedi "actions to appear to execute in different orders from the perspective of different threads, making reasoning about ordering in the absence of synchronization even more complicated". a reordering azzal fogl h az operek miert delayedek v tunik ugy h out-of-order execelnek
+
+public class PossibleReordering {
+  static int x = 0, y = 0; static int a = 0, b = 0;
+  public static void main(String[] args) throws InterruptedException {
+    Thread one = new Thread(new Runnable() { public void run() { a = 1; x = b;} )
+	Thread other = new Thread(new Runnable() { public void run() { b = 1; y = a; )
+	one.start(); other.start(); one.join(); other.join(); sout(x, y);
+	
+kimenet lehet 1,0 v 0,1 v 1,1 attol fuggoen h A thread completel B start elott, B thread completel A start elott, v az actionjeik interleavelnek. sot 0,0 is lehet! a threadekben levo actionoknek nincs dataflow depje egymasra, ezert out of order execelodhetnek (meg ha order szerint execelodnek is, a cachek main membe torteno flusholasanak timingjetol fuggoen B szempontjabol ugy tunhet, h az A-beli assignmentek forditott orderben tortentek)
+A: x = b(0), B: b = 1, y = a(0), A: a = 1. A-ban reorder
+
+ez egy trivialis prg de megsem egyszeru megmondani h mik a lehetseges resultjai. mem levelen torteno reordering varatlan prg behavt eredmenyezhet. sync nelkul nehez megmondani h mi lesz az ordering; sokkal egyszerubb bizt h a prg megfeleloen syncelve legyen. sync megakadalyozza h compiler, runtime, hw ugy reorderelje a mem opereket h azzal megsertse a JMM altal nyujtott visibility garanciakat (legtobb proc archon a mem model eleg jo ahhoz h egy volatile read ktge kb megfeleljen egy non-volatile readnek)
+
+[[[16.1.3. The Java Memory Model in 500 Words or Less]]]
+JMM actionokkal dolgozik: var read/write, monitor lock/unlock, thread start/join with. def egy happens before nevu partial orderinget (refl, antiszimm es tranz, de bmely ket elemre nem szukseges h x R y vagy y R x legyen. ~ jobban szeretjuk a szusit mint a sajtburgert, es jobban szeretjuk Mozartot mint Mahlert, de a sajtburger es Mozart kozt nincs relacionk) a prgban levo actionok kozott. ha azt akarjuk garantalni h a B actiont execeo thread lassa az A action eredmenyet (fgtl attol h A es B kulonbozo threadekben tortenik vagy nem) akkor A es B kozt HB relnek kell lennie. ha nincs ket oper kozott HB akkor a JVM tetszes szerint reorderelheti oket
+
+data race akkor van ha vart tobb mint egy thread readel, es min egy thread writeol, de a readek es writeok kozt nincs HB order. jol syncelt prg az amiben nincs data race: ezek seq consistencyt mutatnak, azaz ugy tunik h a prgban levo osszes action egy fixed, global order szerint tortenik
+
+HB ruleok
+- prg order rule: egy threadben egy action HB minden olyan action abban a threadben, ami prg order szerint kesobb jon
+- monitor lock rule: egy monitor lockon torteno unlockolas HB minden rakovetkezo lockolas uazon a monitor lockon (explicit Lock objkon torteno lockolas/unlockolas mem sematicsja uaz mint az intrinsic lockoke)
+- volatile var rule: volatile fielden torteno write HB minden rakovetkezo read uazon a fielden (atomic varok mem semanticsja uaz mint a volatile varoke)
+- thread start rule: Thread.start() hivas HB minden action a started threadben
+- thread termination rule: egy threadben egy action HB bmely masik thread detectalja h a thread terminalt (v sikeres return reven Thread.join()-bol v Thread.isAlive() falset returnol)
+- interruption rule: egy thread interruptot hiv egy masik threaden HB az interruptolt thread detektalja az interruptot (v InterruptedException dobas v isInterrupted()/interrupt() invokolas)
+- finalizer rule: egy obj konstruktoranak vege HB az obj finalizerenek startja
+- transitivity: ha A HB B es B HB C akkor A HB C
+
+bar az actionok csak partially orderedek, a sync actionok (lock acq es release; volatile varok read/writeja) totally orderedek. ezert lehet a HB-nel "rakovetkezo" lock acqokrol es volatile var readekrol beszelni
+
+A: y = 1, lock M, x = 1, unlock M. B: lock M, i = x, unlock M, j = y
+ket thread egy kozos lockkal syncel. az egyes threadekben levo actionok a prg order rule szerint vannak orderelve. mivel A releaseli M lockot, majd B ezutan acqolja M lockot, ezert minden action ami A-ban az unlock M elott tortent, az orderelesben megelozi a B-ben a lock M utan torteno actionoket. ha ket thread kul lockokra syncel, akkor nem tudunk semmit mondani az actionok ordereleserol a ket thread kozti viszonylatban - mert nincs HB a ket thread actionjai kozott
+
+[[[16.1.4. Piggybacking on synchronization]]]
+HB ordering miatt neha lehet egy existing sync visibility propertyjeit piggybackelni. ekkor a HB prg order rulejat kombinaljuk egy masik ordering rule-al (alt a monitor lock v a volatile var rule-al) h ordereljuk az accesseket egy varhoz amit nem guardol lock. ez nagyon erzekeny a stmtek orderjere es ezert fragile; csakkor nagyon perf kritikus classoknal haszn mint pl. RL
+
+az AQS protected metodusainak implja a FT-ben illusztralja a piggybackinget. AQS maintainel egy synchronizer state integert amit FT arra haszn h a task statet tarolja: running, completed, cancelled. de a FT tovabbi varokat is maintainel, pl. a computation resultot. ha egy thread set-et hiv h savelje a resultot, egy masik pedig get-et h retrievelje, akkor a kettot erdemes HB-vel orderelni. ez tortenhet ugy h a result refet volatile-a tesszuk, de ki is hasznalhatjuk az existing syncet ami olcsobb
+
+FT ugy van megalkotva h egy sikeres tryReleaseShared() hivas mindig HB egy rakovetkezo tryAcquireShared() hivas; tryReleaseShared() mindig egy volatile varba writeol amit a tryAcquireShared() readel
+
+private final class Sync extends AbstractQueueSynchronizer { //FT inner class
+  private static final int RUNNING = 1, RAN = 2, CANCELLED = 4; private V result; private Exception exception;
+  void innerSet(V v) { while(true) { int s = getState(); if(ranOrCancelled(s)) return; if(compareAndSetState(s, RAN)) break; } result = v; releaseShared(0); done();
+  V innerGet() throws InterruptedException, ExecutionException { acquireSharedInterruptibly(0); if(getState() == CANCELLED) throw new CancellationException(); if(exception != null) throw new ExecutionException(exception); return result;
+
+innerSet() es innerGet() akkor van meghivva amikor a result saved v retrieved; mivel innerSet() a releaseShared() hivasa elott writeolja a resultot, innerGet() pedig acquireShared() hivasa utan readeli a resultot, ezert a prg order rule, kombinalva a volatile var rule-al biztositja h a result writeolas innerSet()-ben HB a result readeles innerGet()-ben
+
+azert hivjuk piggybackingnek mert egy letezo HB orderinget hasznal, amit vmi mas okbol hoztak letre h biztositsak obj X visibilityjet; es nem kreal egy uj HB orderinget kifejezetten az X publisholasa celjabol
+
+ez a fajta piggybacking amit a FT hasznal fragile es nem celszeru surun hasznalni. de biz esetekben a piggybacking teljesen reasonable, pl. amikor egy class a specje reszekent HB orderinget vallal. pl. BQ-val torteno safe publication a piggybacking egy formaja. egy thread ratesz egy objt a queuera, majd egy masik thread retrieveli onnan, ez safe publicationt jelent, mert a BQ impl eleg syncet tartalmaz annak biztositasara h az enqueue HB a dequeue
+
+egyeb HB orderingek a class libekben
+- item thread-safe collba berakasa HB masik thread retrieveli az itemet a collbol
+- CDL countdown HB egy thread returnol a latch await()-jebol
+- permit release egy Semaphoreba HB permit acq uabbol a Semaphorebol
+- Future altal repr task altal vegzett actionok HB masik thread sikeresen returnol Future.get()-bol
+- Runnable/Callable submittolasa Executornak HB task begins execution
+- thread CyclicBarrierhez v Exchangerhez erkezese HB tobbi thread releaselese uarrol a barrierrol v exchange pointrol. ha CB egy barrier actiont haszn, akkor a barrierhez valo erkezes HB a barrier action ami pedig HB threadek releaselese a barrierrol
+
+[[16.2. PUBLICATION]]
+3-ban lattuk h lehet egy obj safely v improperly published. ott leirt safe publ technikak safetyje a JMM garanciaibol szarm; az improper publ riskjei annak a kovetkezmenye h nincs HB egy shared obj publisholasa es egy masik threadbol torteno accessolasa kozt
+
+[[[16.2.1. Unsafe Publication]]]
+HB hianyaban a reordering lehetosege megmagyarazza hg miert van az h ha megfelelo sync nelkul publisholunk egy objt akkor egy masik thread partially constructed objt lathat (ld. 3.5). uj obj initje var writeokat tart - az uj obj fieldjeibe. hasonloan egy ref publisholasa soran is varba writeolunk - az uj obj refjebe. ha nem bizt h a shared ref publisholasa HB egy masik thread betolti azt a shared reft, akkor az uj obj refjenek writeolasa reorderelodhet (az objt consumalo masik thread szemszogebol) a fieldjeinek a writeolasaval. ebben az esetben egy masik thread up-to-date valuet lathat az obj refben, de out-of-date valuet az obj statejenek egy reszeben vagy az egeszben, azaz partially constructed objt
+
+unsafe publ tortenhet incorrect lazy init eredmenyekeppen
+public class UnsafeLazyInit {
+  private static Resource resource;
+  public static Resource getInstance() { if(resource == null) resource = new Resource(); /* unsafe publ */ return resource;
+
+elso ranezesre az egyetlen problema a 2.2.2-ben leirt race cond. bizonyos esetekben, pl. ha minden Resource instance identical (i.e. singleton!?) akkor ezzel nem mindig fogl (legfeljebb tobbszor is megkrealjuk a Resourcet ami nem annyira hatekony). de sajnos meg ha ettol el is tekintunk, az UnsafeLazyInit akkor sem safe, mert egy masik thread egy partially constructed Resourcet observelhet
+
+tfh eloszor A thread invokolja getInstance()-ot. resource-t nullnak latja, ezert new Resource()-t peldanyosit es rasetteli a resource refet. amikor B thread kesobb getInstance()-ot hiv, azt lathatja h resource mar non-null es elkezdi hasznalni a megkrealt Resource-ot. ez elsore artalmatlannak tunhet, de nincs HB ordering az A-ban torteno resource writing es a B-ben torteno resource reading kozt. az obj publisholasban data race van, ezert nem garantalt h B a Resource correct statejet latja
+
+Resource konstruktor megvaltoztatja a frissen allocolt Resource fieldjeit a default valuekrol (amiket az Object konstr writeolt be) az initial valuekra. mivel egyik thread sem hasznalt syncet, ezert B lehet h mas orderben latja az A actionjait mint ahogy A vegrehajtotta oket. tehat bar A azelott initelte Resourcet h rasettelte volna a resource refet, B ugy lathatja a resource writeolasat mintha az a Resource fieldjeibe valo writeok elott tortent volna. tehat B egy partially constructed Resourcet lathat ami invalid stateben lehet - es a state kesobb unexpected modon meg is valtozhat
+
+immut objk kivetelevel nem safe egy olyan objt hasznalni amelyet egy masik thread initelt; csak ha a publication HB a consuming thread hasznalja az objt
+
+[[[16.2.2. Safe Publication]]]
+3-ban leirt safe publ idiomok bizt h a published obj visible mas threadek szamara, mert bizt h a publication HB consuming thread betolti a published obj refjet. ha A thread BQ-ra raja X-et (es mas thread kesobb nem modifolja) es B thread retrieveli onnan, akkor garantalt h B ugy fogja latni ahogy A hagyta. ez azert van mert BQ implkban eleg internal sync van ahhoz h put HB take. hasonloan egy lockkal guardolt shared var v egy shared volatile var bizt h a var readjeit es writejait HB ordereli
+
+ez a HB altali garancia egyebkent erosebb visibility es ordering mint amit a safe publ nyujt. ha X safely published A-tol B-nek, akkor a safe publ garantalja X statejenek visibilityjet, de ez nem von az A altal megerintett varok statejere. de ha A queuera rakja X-et HB B fetcheli X-et a queuerol, akkor B nem csak X-et latja abban a stateben ahogy A hagyta (felteve h X-et azota nem modifolta sem A sem mas) de B minden mast is lat amit A a handoff elott tett (JMM azt garantalja h B egy valuet legalabb annyira up-to-datenek fogja latni mint amit A belewriteolt; a rakovetkezo writeok vagy lathatoak lesznek vagy nem)
+
+miert fokuszaltunk annyira a guardolasra es a safe publicationra ha a JMM nyujtja az ennel erosebb HB-t? mert az ownership handoffolas es publication fogalmai alt jobban ill prg designba mint az individual mem writeok visibilityje. HB az individual mem accessek szintjen operal, egyfajta "conc assembly nyelven", safe publ ennel kozelebb van a prg designhoz
+
+[[[16.2.3. Safe Initialization Idioms]]]
+draga objk initjet neha celszeru deferrelni addig amig tenylegesen szukseg lesz rajuk, de lattuk h incorrect lazy initbol gond lehet. az UnsafeLazyInitialization fixalhato ha a getResource() metodust synchronizedde tesszuk. mivel a code path eleg rovid (egy test es egy predicted branch) ha a getInstance()-t nem hivja gyakran sok thread, akkor a lock contentionja kicsi, es a perf megfelelo
+
+static fieldek initializerekkel kezelese (v olyan fieldeke amelyek static init blockban vannak initelve) tovabbi threadsafety garanciakat nyujt. a static initializereket a JVM class init timeban futtatja, classloading utan de meg mielott a classt bmilyen thread hasznalna. mivel a JVM az init soran egy lockot acqol es ezt a lockot minden thread min 1x acqolja h bizt h a class be lett toltve, a static initi soran tortent writeok autom visible lesznek minden thread szamara. ezert a statically initelt objk nem igenyelnek expl syncet sem a krealasuk sem a referalasuk soran. de ez csak az as-constructed statere von - ha az obj mutable, akkor a readerek es writerek reszerol sync szukseges h a tovabbi modifok visiblek legyenek, es ne legyen data corruption
+
+public class EagerInit { private static Resource resource = new Resource(); public static Resource getResource() { return resource; }
+
+az eager init eliminalja a sync ktget amit a safe lazy init eseteben minden synchronized getInstance() hivasnal meg kell fizetni. ezt kombinalva a JVM lazy class loadingjeval krealhatunk egy olyan lazy init technikat ami nem igenyel syncet a common code pathon
+
+public class ResourceFactory {
+  private static class ResourceHolder { public static Resource resource = new Resource();
+  public static Resource getResource() { return ResourceHolder.resource;
+  
+lazy initialization holder idiom: egy olyan classt haszn aminek az egyetlen celja a Resource initelese. a JVM deferralja a ResourceHolder class initeleset amig tenylegesen nem lesz hasznalva, es mivel a Resource-t egy static initializer initeli, nem kell plusz sync. az elso getResource() hivas, bmely thread reszerol, eredmenyezi a ResourceHolder betolteset es initeleset, es ekkor tortenik meg a Resource initelese a static initializeren keresztul
+
+[[[16.2.4. Double-checked Locking]]]
+public class DoubleCheckedLocking { 
+  private static Resource resource;
+  public static Resource getInstance() { if(resource == null) { synchronized(DoubleCheckedLocking.class) { if(resource == null) resource = new Resource(); } } return resource;
+  
+antipattern! korai JVM-eken a syncnek, meg az uncontended syncnek is jelentos perf ktge volt. ezt probaltak mindenfele trukkokkel csokk
+korai JVM-ek perfje nem volt tul jo, ezert gyakran hasznaltak lazy initet h elkeruljek a folosleges draga opereket v csokk startup timeot. megfeleloen megirt lazy init metodus syncet igenyel. de akkoriban sync lassu volt, es a visibilityt nem is ertettek pontosan
+
+DCL-rol azt hittek h ugy nyujt lazy initet h nem kell a common code path sync ktgeit megfizetni. eloszor sync nelkul csekkeli h szukseges-e az init, es ha a resource ref nem null akkor hasznalhatjuk. egyebkent sync es azon belul ujra csekkeljuk h a Resource initelve van-e mar, ezzel bizt h csak egy thread initeli a shared Resourcet. a common code path - ref fetchelese egy mar megkrealt Resource-ra - nem hasznal syncet. es ez a gond, mivel ahogy 16.2.1-ben lattuk, lehetseges h egy thread egy partially constructed objt fog latni
+
+DCL fo gondja h azt felt, h a legrosszabb ami tortenhet amikor sync nelkul readelunk egy shared obj refet, az h egy hibas stale valuet latunk (itt nullt); ebben az esetben a DCL ujra megprobalna ezuttal egy lockot tartva. de a legrosszabb nem ez, hanem h bar az obj refnek a current statejet latjuk, de az obj stateben stale valuekat, azaz az obj invalid/incorrect stateben lathato
+
+JMM-ben kesobbi valtozasok (Java 5-tol) lehetove tettek h a DCL mukodjon ha a resource volatile, es ennek a perf impactja se nagy mert a volatile readek alt csak kicsivel dragabbak mint a non-volatile readek. de az okok ami miatt kitalaltak (lassu uncontended sync, lassu JVM startup) mar nem allnak fenn, ezert igazabol nem jelent optimizaciot. a lazy init holder uezt tudja es egyszerubb megerteni
+
+[[16.3. INITIALIZATION SAFETY]]
+ez a garancia lehetove teszi h a megfeleloen megkrealt immut objk safely sharedek lehessenek threadek kozott sync nelkul, fgtl attol hogyan vannak publisholva - meg ha data raceben is vannak publisholva (azaz UnsafeLazyInit valojaban safe ha a Resource immut)
+
+init safety nelkul az immutnak feltetelezett objk mint pl. String ugy tunik h megvalt az ertekuket ha a publishing es a consuming threadek is nem hasznalnak syncet. pl. a security arch a Stringek imuutjan alapul, tehat ha nem lenne init safety, az security vulnert okozhatna
+
+int safety garantalja, h megfeleloen megkrealt objkra, minden thread a final fieldek megfelelo valueit fogja latni amelyeket a konstr allitott be, fgtl attol h lett az obj publisholva. tovabba minden var amely egy megfeleloen megkrealt obj final fieldjen keresztul erheto el (pl. egy final array elemei v egy final fielddel refelt HashMap contentje) szinten garantaltan visible mas threadek szamara (ez csak olyan objkra von, amelyek csak a krealas alatt levo obj final fieldjein keresztul elerhetoek (?))
+
+final fieldekkel rendelkezo objkra az init safety megakadalyozza a krealas bmely reszenek reordereleset, "with the initial load of a reference to that object". minden write amit a final fieldekbe a konstr csinal, vmint minden ezeken a fieldeken keresztul elerheto var "frozen" lesz amikor a konstr completel, es minden thread aminek refje van az objra, garantaltan egy olyan valuet fog latni ami legalabb annyira up-to-date mint a frozen ertek. azok a writeok amelyek a final fieldeken keresztul elerheto varokat initelnek, nem lesznek a konstr utani freezet koveto operekkel reorderelve
+
+public class SafeStates {
+  private final Map<String,String> states;
+  public SafeStates() { states = new HashMap<>(); states.put("alaska", "AK")...
+  public String getAbbreviation(String s) { return states.get(s);
+  
+init safety miatt a SafeStates safely publisholhato, meg unsafe lazy initen keresztul is, v public static fieldbol refelve egy SafeStates-t sync nelkul; pedig nem hasznal syncet es a nem-threadsafe HashMap-on alapul  
+
+de ha a states nem lenne final v bmely metodus a konstrn kivul modifolna a contentjet, akkor az init safety nem lenne eleg eros ahhoz h sync nelkul lehessen accessalni a SafeStatest. ha egyeb non-final fieldjei is lennenek, akkor mas threadek incorrect valuekat lathatnanak azokban. es ha az obj a konstr soran escapelodhetne, az is invalidalna az init safety garanciat
+
+init safety csak azokra a valuekra ad visibility garanciat, amelyek final fieldeken keresztul elerhetoek a konstr befejezesenek idopontjaban. normal fieldekre v a konstr utan megvaltozo valuekra syncet kell hasznalnunk a visibility biztositasara

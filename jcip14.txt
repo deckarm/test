@@ -1,0 +1,270 @@
+Java Concurrency in Practice
+
+[Chapter 14. Building Custom Synchronizers]
+class libekben szamos state-dependent class van (azok amelyekben az opereknek state-based precondjai vannak), pl. FutureTask, Semaphore, BQ. pl. empty queuebol nem tudunk removolni, v meg nem finished task resultjat nem tudjuk retrievelni
+
+state-dependent class konstrualasanak legegyszerubb modja ha existing lib classra epitunk (ld. 8.5.1 ValueLatch: CDL-t hasznaltunk a blocking behavhoz). de ha a lib classok nem nyujtjak a kivant funct akkor megkrealhatjuk a sajat synchronizerjeinket is, a nyelv low-level mechjai es libjei segitsegevel, pl. intrinsic condition queuek, explicit Condition objk, AbstractQueuedSynchronizer fw
+
+[[14.1. MANAGING STATE DEPENDENCE]]
+single threaded prgban ha egy state-based precond (pl. "conn pool is nonempty") nem all meg amikor egy metodus meghivodik, akkor az sosem valik true-va. ezert seq prgban a classok megkrealhatok ugy h faileljenek ha a precondjaik nem allnak meg. de conc prgban a state-based conditionok valtozhatnak mas threadek tevekenysege nyoman: egy pool ami par instructionnal ezelott meg empty volt, most mar nonempty lehet mert egy masik thread kozben returnolt egy elementet. conc objkban a state-dependent metodusok "can sometimes get away with failing" ha a precondjaik nem allnak meg; de jobb alternativa ha megvarjuk amig a precond true lesz
+
+azok a state-dependent operek amelyek blockolnak amig az oper tovabb tud haladni jobbak es kevesbe error-proneok azoknal amelyek egyszeruen failelnek. a built-in cond queue mech lehetove teszi h a threadek blockoljanak amig egy obj be nem lep egy olyan statebe ami lehetove teszi a tovabbhaladast; es wakeupolja a blocked threadeket amikor tovabb tudnak haladni. cond queuekrol 14.2-ben lesz szo, de eloszor bemutatjuk h polling/sleeping segitsegevel milyen fajdalmas a state dependence athidalasa
+
+blocking state-dependent action
+acq lock on obj state; while(precond does not hold) { release lock; wait until precond might hold; optionally fail if interrupted or timeout expires; reacq lock } perform action; release lock
+lock releaselve es reacqolva az oper kozepen. a precondt alkoto state varokat az obj lockjanak kell guardolnia, h allandoak tudjanak maradni amig a precond csekkeles alatt van. de ha a precond nem all meg akkor lockot releaselni kell h mas threadek modifolni tudjak az obj statet - mert kulonben a precond sosem lesz true. a lockot aztan reacqolni kell mielott ujra csekkelnenk a precondot
+
+P/C designokban gyakran haszn bounded buffereket mint pl. ABQ. take/put operek precondjai: empty bufferbol nem tudunk takelni, full bufferbe nem tudunk putolni. state dependent operek kezelhetik a precond failuret exc dobassal v error status returnolessel (igy a hivonak kell kezelnie) v addig blockolva amig az obj atmegy a megfelelo statebe
+
+most tobbfele bounded buffer impl lesz bemutatva, amelyek maskent kezelik a precond failuret. mindegyik egy BaseBoundedBuffer-t extendal, ami array-based circular buffert impl, ahol a buffer state varjait (buf, head, tail, count) a buffer intrinsic lockja guardolja. a subclassok a synchronized doPut() es doTake() opereket hasznalhatjak; a state el van hideolva a subclassok elol
+
+[[[14.1.1. Example: propagating precondition failure to callers]]]
+public class GrumpyBoundedBuffer<V> extends BaseBoundedBuffer<V> {
+  public synchronized void doPut(V v) throws BufferFullException { if(isFull()) throw new BufferFullException(); doPut();
+  public synchronized V take() throws BufferEmptyException { if(isEmpty()) throw new BufferEmptyException(); return doTake();
+client: while(true) { try { V item = buffer.take(); /* use item*/ break; } catch(BufferEmptyException e) { Thread.sleep(...); }
+put() es take() synchronizedek h excl accesst biztositsanak a buffer statehez, mivel mindkettoben check-then-act logic van
+
+egyszeru impl, de nehezen hasznalhato. exceket exceptional conditionokra kellene hasznalni, es pl. a "buffer is full" nem ilyen. a buffer impl egyszeru, cserebe viszont a clientnek kell catchelni az exceket majd retryolni. a state dependence visszapusholasa a clientbe szinten gyak lehetetlenne teszi a FIFO orderinget; azzal h a hivonak kell retryolnia, elvesztjuk az infot h ki erkezett elobb
+
+ennek egy valtozata ha error valuet returnolunk amikor a buffer rossz stateben van. ez egy kis improvement ahhoz kepest h igy nem hasznalunk exct arra amire nem valo, de az alap problemat nem oldja meg: tovabbra is a clienteknek kell kezelniuk a precond failureket (Queue mindkettot nyujtja: poll() nullt returnol, remove() pedig exct dob ha a queue ures; de Queue nem P/C-re van kitalalva. BQ jobb valasztas conc execelo P/C-k eseteben, mert ennek operjei blockolnak amig a queue megfelelo stateben nem lesz)
+
+a fenti client kod nem az egyetlen modja a retrynak. a hivo azonnal, sleep nelkul retryolhatja a take()-et, ez az un. busy/spin waiting. ez sok CPU idobe kerulhet ha a buffer state egy ideig nem valt. viszont ha a hivo sleepel h ne fogyasszon annyi CPU idot, akkor "oversleep"-elhet amennyiben a buffer state a sleep() kiadasa utan hamar megvaltozik. tehat a clientnek valasztania kell a rossz CPU kihasznaltsag es a rossz resp kozott (a ketto kozott van az a mo ahol minden iterben Thread.yield()-et hivunk, amivel osztonozhetjuk a schedulert arra h masik threadet futtasson. amennyiben eppen waitelunk arra h egy masik thread csinaljon vmit, akkor ez a vmi yield eseten gyorsabban bekovetkezhet mintha kitoltenenk a teljes scheduling quantumunkat)
+
+[[[14.1.2. Example: Crude Blocking by Polling and Sleeping]]]
+public class SleepyBoundedBuffer<V> extends BaseBoundedBuffer<V> {
+  public void put(V v) throws InterruptedException { while(true) { synchronized(this) { if(!isFull()) { doPut(); return; } } Thread.sleep(...)
+  public V take() throws InterruptedException { while(true) { synchronized(this) { if(!isEmpty()) return doTake(); } Thread.sleep(...)
+
+megprobalja megsporolni h a hivoknak kelljen impl a retryt, azzal h encapsolja a "poll  and sleep"-et a put()/take()-be. ha a buffer empty akkor a take() addig sleepel amig egy masik thread datat tesz a bufferbe; ha a buffer full, akkor a put() addig sleepel amig egy masik thread datat removol. ez encapsolja a precond kezelest es egyszerusiti a buffer hasznalatat
+
+az impl komplexebb mint az elozo kiserletnel. a buffernek csekkelnie kell a state conditiont, mikozben tartja a buffer lockot, mert a state conditiont repr varokat ez guardolja. ha a csekkeles failel akkor az execelo thread egy kicsit sleepel, miutan releaselte a lockot h mas threadek is accessalni tudjak a buffert (alt nem jo otlet lock tartasa mellett sleepelni v mas modon blockolni, de ebben az esetben meg rosszabb mivel a kivant condition (buffer full/empty) sosem valhat trueva ha a lock nincs releaselve). ha a thread wakeupolodott, akkor reacqolja a lockot es ujra megprobalja, alternalva a sleeping es a state csekkeles ozott amig az oper tovabb tud haladni
+
+a hivo szempontjabol ez jol muk - ha az oper azonnal tovabb tud haladni akkor haladjon, egyebkent blockol - es neki nem kell fogl a failure/retry resszel. a sleep idotartam megvalasztasa tradeoff a resp es a CPU asage kozt; minel kisebb annal resp++, de annal tobb CPU rsct haszn
+thread oversleeping: A thread false-nak latja a conditiont, es sleepbe megy pont akkor amikor egy B thread true-ra allitja
+
+hivonak itt kezelnie kell az InterruptedExceptiont. ha egy metodus egy condition truera valasara waitelve blockol, akkor celszeru ha nyujt vmi cancellation mecht nyujtania (ld. 7). jol viselkedo lib metodusokhoz hasonloan a SleepyBoundedBuffer is tam cancellationt, interruption eseten early returnolve es InterruptedExceptiont dobva
+
+ezek a polling and sleeping kiserletek blocking operre eleg fajdalmasak voltak. jo lenne ha lenne mod egy threadet suspendelni, de biztositani h wakeupolodjon amikor egy condition (pl. buffer mar nem full) trueva valik. erre jok a cond queuek
+
+[[[14.1.3. Condition Queues to the Rescue]]]
+~ "kesz a piritos" jelzes a kenyerpiriton. ha figyelunk ra akkor notifyolva leszunk a megfelelo pillanatban. ha nem figyelunk ra (pl. mert nem vagyunk a konyhaban), akkor lemaradhatunk a notifyrol, de aztan visszamehetunk a konyhaba, megnezhetjuk a pirito statejet es kivehetjuk a piritost ha kesz v elkezdhetunk ujra a jelzesre figyelni ha meg nincs
+
+cond queue segitsegevel threadek egy groupja (un. wait set) waitelhet egy condition trueva valasara. tip queuekban az elemek data itemek, a cond queueban viszont az elemek a conditionra varo threadek
+
+ahogy minden Java obj lehet lock, ugy mindne obj viselkedhet cond queuekent, es a wait(), notify(), notifyAll() metodusok jelentik az intrinsic cond queuek APIjat . egy obj intrinsic lockja es intrinsic cond queueja kapcsolatban van: ahhoz h obj X-en meg tudjuk hivni a cond queue metodusokat, tartani kell X lockjat. ez azert van mert a state-based conditionokra valo waiteles mechja szuksegszeruen kapcs a state consistencyt megorzo mech-hoz: nem waitelhetunk egy condra anelkul h vizsgalnank a statet, es nem releaselhetunk egy masik threadet egy condition waitbol anelkul h modifyolhatnank a statet
+
+Object.wait() atomically releaseli a lockot es keri meg az OSt h suspendelje a current threadet, lehetove teve h mas threadek acqoljak a lockot es modifoljak az obj statet. wakeupkor reacqolja a lockot mielott returnolne. intuitive a wait() hivas azt jelenti h "aludni akarok de ebressz fel ha vmi erdekes tortenik", a notify metodusok pedig azt h "vmi erdekes tortent"
+
+bounded buffer impl wait-notify-al
+public class BoundedBuffer<V> extends BaseBoundedBuffer<V> {
+  //cond pred: not-full (!isFull()), not-empty (!isEmpty())
+  public synchronized void put(V v) throws InterruptedException { while(!isFull()) wait(); doPut(); notifyAll(); //blocks until not-full
+  public synchronized V take() throws InterruptedException { while(isEmpty()) wait(); V v = doTake(); notifyAll(); return v; //blocks until not-empty
+
+egyszerubb mint a sleeping valtozat, hatekonyabb (ritkabban wakeupolodik ha a buffer state nem valt) es responsivabb (azonnal wakeupolodik ha erdekes state change tortenik). ez improvement de a cond queuek bevezetese nem valtoztatta a semanticst a sleeping valtozathoz kepest, csak jobb lett CPU eff, ctx-switch overhead, resp szempontokbol. cond queuekkal nem lehet semmi olyat csinalni amit sleepinggel es polliggal ne lehetne, csak jobb state mgmt szempontjabol (fair cond queue garantal egy relativ ordert amely szerint a threadek releaselodnek a wait setbol. az intrinsic cond queuek nem bizt fair queueingot, explicit Conditionoknal van fair/nonfair kozti valasztas)
+
+BoundedBuffer egy jo mo; konnyu haszn es jol manageli a state dependencet. prod verzioba persze kellene timed put()/take() h a blocking operek tudjanak timeoutolni ha adott time budgeten belul nem tudnak completelni. ez Object.wait() timed verziojaval megoldhato. 14.3-ban ConditionBoundedBuffer meg jobb lesz mert single notif van benne notifyAll() helyett
+
+[[14.2. USING CONDITION QUEUES]]
+cond queuekkal hatekony es resp state-dependent classokat lehet epiteni, de konnyu rosszul hazsnalni oket; sok rajuk von szabaly van amiket a compiler/platform nem enforcol (ezert erdemes letezo classok mint LBQ, CDL, Semaphore, FutureTask tetejere epiteni)
+
+[[[14.2.1. The Condition Predicate]]]
+cond queuek helyes hasznalatanak kulcsa a cond predicatek azonositasa, amelyekre az obj waitelhet. a wait() es notify() koruli zavar nagy reszet ez okozza, mivel a cond predicatek mint olyanok nem szerepelnek API-ban, es sem a lang spec sem a JVM impl nem kenyszeriti ki a helyes hasznalatukat; de enelkul a cond waitek nem mukodnek
+
+cond predicate az a precond amely state-dependentte tesz egy opert. bounded bufferben take() csakkor haladhat tovabb ha a buffer nem empty; egyebkent waitelnie kell. tehat a take() cond predicateje a "buffer is not empty" amit a take()-nek tovabbhaladas elott csekkelnie kell. hasonloan a put() cond prepicateje a "buffer is not full". cond predicatek a class state varjaibol kepzett expressionok (pl. BaseBoundedBuffer count == 0-val csekkeli h "buffer not empty", es count == size-al h "buffer not full")
+
+3-way kapcs a cond wait, a wait() es a cond pred kozott. cond predben state varok vannak, amelyeket lock guardol, tehat a cond pred csekkelese elott tartanunk kell azt a lockot. a lock objnak es a cond queue objnak (amelyen a wait() es a notify() invokolva van) uannak kell lennie
+
+BoundedBufferben a buffer statet a buffer lock guardolja, es a buffer obj van cond queuekent hasznalva.  atake() acqolja a buffer lockot es aztan csekeli a cond predet (h a buffer non-empty). ha a buffer tenyleg non-empty akkor removolja az elso elemet, amit megtehet mert nala van a buffer statet guardolo lock
+
+ha a cond pred nem true (a buffer empty) akkor take()-nek waitelnie kell amig egy masik thread objt rak a bufferbe. ehhez meg kell hivnia a wait()-et a buffer intrinsic cond queuejan, amihez tartania kell a cond queue obj lockjat . jo designnal a take() mar tartja ezt a lockot, mert h szuksege volt ra a cond pred csekkelesehez (es ha a cond pred true volt a buffer state modifolasahoz uabban az atomic operben). a wait() releaseli a lockot, blockolja a current threadet es waitel amig a megadott timeout lejar, a thread intterutolodik v a threadet wakeupolja egy notif. miutan a thread wakeupolodott, wait() reacqolja a lockot mielott returnolne. wait()-bol wakeupolo thread nem kedvezmenyezett a lock reacqolasaban; uugy contendelnie kell a lockert mint bmely thread ami synchronized blockba szeretne belepni
+
+minden wait() hivas impliciten osszekapcsolodik egy cond preddel. ha egy bizonyos cond predre vonatkozoan hivjuk a wait()-et, akkor a hivonak tartania kell a cond queue lockjat, es ennek a locknak kell guardolnia a state varokat amelyekbol a cond pred felepult
+
+[[[14.2.2. Waking Up Too Soon]]]
+wait() returnolese nem szuksegszeruen jelenti azt h a cond pred amelyre a thread waitel, trueva valt
+
+egy single intrinsic cond queue tobb cond preddel is hasznalhato. ha a threadem azert wakeupolodott mert vki notifyAll()-t hivott, az nem jelenti azt h az a cond pred amelyre en vartam, most true (~ kenyerpirito es kavefozo uazt a csengot hasznalja: ha csorog akkor csekkelni kell h melyik eszkoz miatt). tovabba a wait() "spurious" modon is returnolhet, azaz nem kell hozza h bmely thread notify()-t hivjon (~ kenyerpirito illeszkedesi hibas ezert a csengo neha akkor is megszolal amikor a piritos meg nincs kesz)
+
+amikor a control visszakerul a wait()-et hivo kodba, reacqolja a cond queue lockjat. a cond pred most true? lehetseges. lehet h true volt akkor amikor a notifyolo thread meghivta a notifyAll()-t, de mire reacqoltuk a lockot, ujra falsera valthatott. mas threadek acqolhattak a lockot es modosithattak az obj statejet akozott h az en threadem wakeupolodott es h a wait() reacqolta a lockot. v egyaltalan nem volt true miota meghivtuk a wait()-et. azt sem tudjuk h egy masik thread miert hivott notify()/notifyAll()-t; az is lehet h azert mert egy uarra a cond queuera von masik cond pred valt trueva. tobb cond pred per cond queue gyakori, pl. BoundedBuffer uazt a cond queuet hasznalja a "not full" es a "not empty" predekre (meg az is lehetseges h thread egyszerre waiteljen a "not full" es "not empty"-re; akkor ha a P/C-k szama tullepi a buffer capacot)
+
+ezek miatt ha wakeupolodunk a wait()-bl, akkor ujra kell csekkelni a cond predet es visszamenni a waitingbe (v failelni) ha meg nem true. mivel ujra es ujra lehet wakeupolni anelkul h a cond pred true lenne, ezert a wait()-et mindig loopban kell hivni, es minden iterben csekkelni a cond predet
+/* cond predet lock kell guardolja */ synchronized(lock) { while(!conditionPredicate()) lock.wait(); /* obj in desired state */ } }
+
+cond waitek (Object.wait(), Condition.await()) hasznalatakor
+- mindig legyen cond pred - vmi obj state, aminek telj kell mielott tovabbhaladhatnank
+- mindig csekkeljuk a cond predet wait() meghivasa elott , es aztan a wait()-bol returnoles utan is
+- mindig loopban hivjuk a wait()-et
+- biztositsuk h a cond predet alkoto state varokat a cond queue lockja guardolja
+- tartsuk a cond queue lockjat amikor wait()/notify()/notifyAll()-t hivunk
+- ne a cond pred csekkeles utan releaseljuk a lockot, "but before acting on it" (?)
+
+[[[14.2.3. Missed Signals]]]
+10-ben volt szo a liveness failurekrol mint DL es LL. liveness failure masik formaja a missed signals. ez olyankor tortenik amikor egy threadnek egy olyan condra kell waitelnie ami mar true, de nem csekkeli a cond predet a waiteles elott. ekkor a thread egy olyan eventtel kapcs notifyolasra var ami mar megtortent. ~ elinditom a piritost, kimegyek az ujsagert, a csengo azalatt szolal meg mig kint vagyok, aztan visszajovok es varom h megszolaljon. a notif nem "sticky" - ha A thread notifol a cond queura, thread B pedig subsequently waitel uarra a cond queuera, akkor B nem fog wakeupolodni, ahhoz egy masik notif kell. missed signalok coding errorok eredmenyei, pl. ha a fenti listabol nem tartunk be vmit, pl. nem csekkeljuk a cond predet a wait() hivasa elott
+
+[[[14.2.4. Notification]]]
+eddig a cond wait felet irtuk le: a waitet. masik felel a notif. bounded bufferben a take() blockol ha akkor hivjak amikor a buffer empty. ahhoz h a take() unblockoljon amikor a buffer nonempty lesz, biztositani kell h minden code path notifyoljon amelyen a buffer nonemptyve valhat. BoundedBuffer-ben egy ilyen hely van, put() utan. ezert a put() notifyAll()-t hiv miutan sikeresen hozzaadott egy objt a bufferhez. hasonloan a take() notifyAll()-t hiv miutan removolt egy elemet, jelezve a "not full" condra waitelo threadeknek
+
+ha condra waitelunk, biztositsuk h vki notifol amennyiben a cond pred trueva valik
+
+cond queue API-ban ket notif metodus: notify() es notifyAll(). bmelyik meghivasahoz a cond queuehoz kapcs lockot kell tartani. notify() hatasara a JVM a cond queuera waitelo threadek kozul egyet wakeupol; notifyAll() hatasara a cond queura waitelo osszes threadet wakeupolja. mivel a notify()/notifyAll() hivasahoz tartani kell a cond queuehoz kapcs lockot, es a waitelo threadek nem returnolhetnek a waite()-bol a lock reacq nelkul, a notifyolo threadnek gyorsan releaselnie kell a lockot h biztositsa h a waiting threadok ublockolodjanak
+
+mivel tobb thread waitelhet uarra a cond queuera de klf cond predek mellett, notify() hasznalata notifyAll() helyett a missed signalokhoz hasonlo problemat okozhat
+pl. BoundedBuffer. a cond queuet ket cond preddel haszn: "not full" es "not empty". tfh thread A waitel a cond queura PA pred mellett, thread B pedig uarra a cond queuera waitel PB pred mellett. tfh PB trueva valik, es thread C notify()-t ad ki: a JVM wakeupol egy tetszes szerinti threadet. ha thread A-t val akkor az wakeupolodik, latja h PA nem true, es ezert visszamegy waitelni. kozben thread B ami haladhatna, nem wakeupol. mondhatjuk h ez "hijacked signal": thread waitel egy signalra ami mar megtortent
+
+notify() csakkor hasznalhato notifyAll() helyett ha ezek kozul mindketto fennall
+- uniform waiterek: cond queuehoz csak egy cond pred kapcs, es mindegyik thread uazt a logicot execeli a wait()-bol returnoleskor
+- one in, one out: a cond varon vegrehajtott notif max egy thread tovabbhaladasat teszi lehetove
+
+BoundedBufferre telj az one in one out, de nem telj a uniform waiter, mert "not full" es "not empty" condok is vannak. 5.5.1-ben latott TestHarness "starting gate" latch, amelyben egy event threadek egy setjet releaseli, az one in one out-ot nem telj
+
+legtobb class nem telj ezeket ezert notifyAll() alt celszerubb. lehet h ez kevesbe hatekony, de legalabb jol fog mukodni
+nem tul hatekony notifyAll()-t hasznalni amikor csak egy thread tud tovabbhaladni. ha tiz thread waitel egy cond queuera, akkor notifyAll() mindegyiket wakeupolja,  contendelni fognak a lockert, majd a tobbseguk visszaalszik. ez minden eventnel sok ctx switchet, es contended lock acqot jelent, mikozben (esetleg) egy thread tud tovabbhaladni. legrosszabb esetben notifyAll() O(n2) wakeupot eredmenyez, mikozben n eleg lenne. ez megint egy olyan eset ahol a safety vs perf all egymassal szemben
+
+BoundedBuffer put()/take() notifja konzervativ: ha obj van putolva v removolva, akkor notif van. ezt lehetne optimizalni, ha (tekintve h egy thread csakkor johet ki waitbol ha a buffer emptybol nonemptybe v fullbol not fullba megy) csakkor notifyolnank ha a put()/take() ezeknel a state transitionoknal tortenik. ez az un. conditional notif. ez javithat perft, de nehez impl
+public synchronized void put(V v) throws InterruptedException { while(isFull()) wait(); boolean wasEmpty = isEmpty(); doPut(); if(wasEmpty) notifyAll();
+
+single notif es cond notif csak optimizaciok; itt is kovessuk a "first make it right then make it fast" elvet, mert konnyen furcsa hibakat okozhatunk veluk
+
+[[[14.2.5. Example: A Gate Class]]]
+5.5.1-ben latott TestHarness starting gate latchnel az initial count 1 volt, vagyis binary latch: ket state, initial es terminal. a latch preventalja h a threadek atmenjenek amig a gate nem nyilik ki. ez gyakran az amire szukseg van, de neha gond h a gatet nem lehet ujra kinyitni ha mar egyszer bezart
+
+public class ThreadGate
+  //cond pred: opened-since(n) (isOpen || generation > n)
+  private boolean isOpen; private int generation;
+  public synchronized void close() { isOpen = false; } 
+  public synchronized void open() { ++generation; isOpen = true; notifyAll(); }
+  //blocks until: opened-since(generation on entry)
+  public synchronized void await() throws InterruptedException { int arrivalGeneration = generation; while(!isOpen && arrivalGeneration == generation) wait();
+  
+recloseable gate cond waitekkel. await() metodus blockol amig a gate ki nem nyilik. az open() metodus notifyAll()-t hasznal, mivel ez a class nem telj a single notifyra von one in one out kriteriumot
+
+az await() altal haszn cond pred nem csak as isOpen-t nezi. ez azert kell mert ha N thread waitel a gatere a kinyitas pillanataban, akkor mindegyiket hagyni kell h tovabbhaladjon. de ha a gate kinyilik majd gyorsan be is zarodik, akkor lehet h nem tud mindegyik thread atmenni ha csak az isOpen-t figyeljuk: mire minden thread megkapja a notifot, reacqolja a lockot es kilep a wait()-bol, addigra a gate ujra bezarodhat. ezert egy valamivel osszetettebb cond pred: mindig amikor a gate bezarul, egy generation countert inkremental, es egy thread akkor passolhatja az await()-et ha a gate jelenleg eppen nyitva van vagy ha a gate azota kinyilt h ez a thread megerkezett a gatehez
+
+mivel a ThreadGate csak a gate kinyitasara valo waitelest supporolja, ezert csak az open()-ben van notif; ha a "wait for close"-t is supportolna akkor a close()-ban is lenne notif. ez mutatja h state-dependent classok maintje nehez lehet - egy uj state-dep oper hozzaadasa tobb code path modifolasat is igenyelheti h a megfelelo notifok vegrehajthatoak legyenek
+
+[[[14.2.6. Subclass Safety Issues]]]
+cond v single notifok olyan constrainteket okozhatnak amelyek megnehezitik a subclassingot. ha subclassingot akarunk, akkor ugy kell megalkotnunk a classunkat h a subclassok hozza tudjak adni a megfelelo notifokat, amennyiben a subclassing megserti a single v cond notif requirementek vmelyiket
+
+state-dependent classnak v teljesen exposolnia (es dokumentalnia) kell a waiting es notif protocoljait a subclassok szamara v preventalnia h a subclassok ezekben reszt vehessenek ("design and document for inheritance or prohibit it", ld Eff Java). ha subclassingra designolunk state-dependent classt, akkor exposolnunk kell a cond queuekat es lockokat, dokumentalni a cond predeket es a synchr policyt; es lehet h az underlying state varokat is exposolnunk kell (a legrosszabb amit egy state-dependent class tehet ha exposolja a statejet a subclassainak, de nem dokumentalja a waiting es notif protocoljait; ez olyan mintha egy class exposolna a state varjait de nem dokumentalna az invariantokat)
+
+egy lehetoseg ha megakadalyozzuk a subclassingot, v finalla teve a classt v elhidoljuk a cond queuekat, lockokat es state varokat a subclassok elol. egyebkent ha a subclass vmi olyat csinal ami bef azt ahogy a base class hasznalja a notify()-t, akkor helyre is kell tudnia allitani a karokat. pl. unbounded blocking stack, amelyben a pop blockol ha a stack empty de a push mindig sikerul. ez telj a single notif requirementjeit. ha ez a class single notifot haszn, de egy subclassa hozzaad egy "popolj ket egymast koveto elemet" metodust, akkor innentol ketfele waiter lehetseges: akik egy elem popolasara waitelnek, es akik ket elem popolasara. de ha a base class exposolja a cond queuet es dokumentalja a protocoljat, akkor a subclass overridolhatja a push()-t ugy h notifyAll()-t hajtson vegre, ezaltal visszaallitva a safetyt
+
+[[[14.2.7. Encapsulating Condition Queues]]]
+legjobb encapsolni a cond queuet h ne legyen accessible azon a class hieren kivulrol amelyben hasznaljak. egyebkent a hivok azt hihetik h ertik a waitingre es notifra von protocolunkat es a designnal inkonz modon hasznalhatjak (nem lehetseges az uniform waiter requirementet enforcolni, csak ha a cond queue obj nem accessible olyan kod szamara amit nem controllalunk; ha alien code tevesen waitel a cond queunkra, az elteritheti a notif protocolunkat es hijacked signalt okozhat)
+
+sajnos ez (cond queuekent hasznalt objk encapsolasa) nem konz a threadsafe classok leggyakoribb design patternjevel, ahol az obj intrinsic lockjaval guardoljuk a statejet. ld. BoundedBuffer ahol a buffer obj maga a lock es a cond queue. de ez konnyen atalakithato h private lock objt es cond queuet hasznaljon; csak az lesz a valtozas h a tovabbiakban nem fogja tam a client oldali lockingot
+
+[[[14.2.8. Entry and Exit Protocols]]]
+minden state-dep operre, es minden olyan operre ami olyan statet modifol amelyre masik opernek state depje van, definialnunk es dokumentalnunk kell egy entry es exit protocolt. az entry protocol az oper cond predje; az exit protocol megnez minden olyan state vart amit az oper megvaltoztatott h nem tettek-e vmely mas cond predt is trueva, es ha igen akkor notifyoljanak a kapcsolodo cond queuen
+
+AbstractQueuedSynchronizer amelyen java.util.concurrent legtobb state-dependent classa alapul, az exit protocol koncepciot haszn. nem a synchronizer classok vegzik a sajat notifjukat, hanem synchronizer metodusok egy valuet returnolnek ami jelzi ha az elvegzett action unblockolt egy vagy tobb waiting threadet. ez az explicit API requirement neheziti h "elfelejtsuk" h bizonyos state transitionoknel notifyolni kell
+
+[[14.3. EXPLICIT CONDITION OBJECTS]]
+mint 13-ban lattuk, expl Lockok hasznosak lehetnek olyan helyzetekben ahol intrinsic lockok nem eleg flex. ahogy a Lock az instrinsic lock altalanositasa, ugy a Condition az intirinsic cond queuek altalanositasa
+
+intrinsic cond queueknak tobb hatranya is van. minden intrinsic lockhoz csak egy cond queue kapcsolodhat ami azt jelenti h olyan classoknal mint pl. a BoundedBuffer, tobb thread waitelhet uarra a cond queura kul cond predek mellett, es a leggyakoribb locking pattern a cond queue obj exposolasat jelenti. mindketto lehetetlenne teszi a notify() uniform waiter requirement enforcolasat. ha conc objt akarunk irni tobb cond preddel, v tobb controlt akarunk a cond queue visibilityje folott, akkor az expl Lock es Condition classok flexebb alternativat jel az intrinsic lockokkal es cond queuekkal szemben
+
+egy Condition egy Lockhoz kapcs, uugy ahogy egy cond queue egy instrinsic lockhoz kapcs; Condition krealasahoz Lock.newCondition()-t kell hivni. es ahogy a Lock tobb mindent nyujt mint az intrinsic lock, a Condition tobbet nyujt mint az intrinsic cond queue: tobb wait set per lock, interruptible/uninterruptible cond waitek, deadline-based waiting, fair/nonfair queueing
+
+Lockonkent bmennyi Condition obj lehet. Condition orokli a kapcsolodo Lock fairness settingjet; fair lockokra a threadek FIFO szerint releaselodnek a Condition.await()-bol
+
+vigyazat! Condition-ban await(), signal() es signalAll() a wait(), notify() es notifyAll() megfeleloi. de mivel Condition extends Object ezert neki is van wait() es notify() metodusa, de ne ezeket hasznaljuk
+
+peldakod: ConditionBoundedBuffer. ket Condition (notFull es notEmpty) explicit repr a "not full" es "not empty" cond predeket. amikor a take() blockol mert a buffer empty akkor a notEmpty-re waitel, a put() pedig a notEmpty-re valo signallal unblockolja a take()-ben blocked bmely threadet
+
+ConditionBoundedBuffer behavja uaz mint a BoundedBuffere, de jobban olvashato; konnyeb analizalni egy classt ami tobb Conditiont haszn, mint ami egyetlen intrinsic cond queuet tobb cond preddel. azzal h kulon wait setekbe szedi szet a ket cond predet, Condition egyszerubbe teszi a single notif requirementek teljesiteset. signlAll() helyett az egyszerubb signal() csokk a buffer operek altal okozott ctx switchek es lock acqok szamat
+
+csakugy mint a built-in lockoknal es cond queuknal, a lock, cond pred es cond varok kozti 3-way kapcsolatnak a Lockoknal es Conditionoknal is fenn kell allnia. a cond predben levo varokat a Lock kell guardolja, es a Lockot tartani kell amikor csekkeljuk a cond predet es hivjuk az await()-et v signal()-t (ReentrantLock megkivanja h signal()/signalAll() hivasakor a Lock tartva legyen, de Lock implk krealhatnak olyan Conditionokat amelyeknel nincs ez a req)
+
+valasszunk az expl Conditionok es intrinsic cond queuek kozott uugy mint ReentrantLock es synchronized kozt: hasznaljunk Conditiont ha az advanced featurejeire van szuksegunk, pl. fair queuing v tobb wait set per lock; egyebkent preferaljuk az intrinsic cond queuekat (ha mar ReentrantLockot hasznalunk, akkor adja magat a valasztas)
+
+[[14.4. ANATOMY OF A SYNCHRONIZER]]
+ReentrantLock es Semaphore iface sokban hasonlit. mindketto "gate"-kent viselkedik, egy idoben csak adott szamu thread athaladasat teve lehetove; threadek megerkeznek a gethez es atmehetnek (lock() v acquire() sikeresen returnol) v waitelniuk kell (lock() v acquire() blockol) v "are turned away" (tryLock() v tryAcquire() falseot returnol, jelezve h a lock v permit nem lett available a megadott idon belul). ezenkivul mindketto lehetove teszi az interruptible, uninterruptible es timed acqolast, es a waiting threadek fair/nonfair queuingje kozti valasztast
+
+ezt tekintve hihetnenk azt h a Semaphore-t a ReentrantLock tetejere impltak v a RL lett egypermites Semaphorekent implva. ez praktikus lenne; gyakori feladat counting semaphore impl lockkal (peldakod: SemaphoreOnLock) v lock impl counting semaphore-al
+
+a valosagban mindketto egy common base classt, az AbstractQueuedSynhronizer-t haszn. AQS egy fw lockok es synchronizerek keszitesere. CDL, RRWL, SQ es FutureTask is erre epulnek (Java 6 ota SQ mar nonblocking alapu, ami scal++)
+
+AQS a synchronizer impl so reszletet kezeli, pl. waiting threadek FIFO queuezasa. synchronizerek flex criteriat definialhatnak arra h thread atmehet-e v waitelnie kell
+
+synchronizerek AQS-el valo krealasanak szamos benefitje van. impl effort--, es nincs tobb contention point mint amikort egyik synchronizert a masik tetejere rakunk. SemaphoreOnLock peldaban permit acqolas ket helyen blockolhat: a semaphore statet guardolo locknal ill ha a permit nem available. AQS-el keszult synchronizerek csak egy pontban blockolhatnak, ezzel ctx switch overhead-- es throughput++. az AGS-t scalra terveztek, es a java.utilconcurrentben levo synchronizerek profitalnak ebbol
+
+[[14.5. ABSTRACTQUEUEDSYNCHRONIZER]]
+AQS-based synchronizerek basic operjei az acq es release variantjai. acq state-dependent oper es mindig blockolhat. locknal v semaphorenal az acq jelentes: permit acqolas, es a hivonak lehet h waitelnie kell amig a synchronizer olyan statebe kerul ahol ez megtortenhet. CDL-nel acq azt jelenti h "waitelj amig a latch eleri a terminal statejet", FutureTasknal "waitelj amig a task completelt". release nem blocking oper; release engedheti az acqban blockolt threadek tovabbhaladasat
+
+state-dependent classnak van vmilyen stateje. AQS manageli a synchronizer class statejet: state info integer, amelyet a protected getState(), setState(), compareAndSetState() metodusokkal manipulalhato. RL ezzel repr h az owning thread hanyszor acqolta a lockot, Semaphore a maradek permiteket, FutureTask a task statejet (not yet started, running, completed, cancelled). a synchronizerek maguk is managelhetnek tovabbi state varokat; pl. RL trackeli a current lock ownert h kult tudjon tenni a reentrant es contended lock acq requestek kozt
+
+AQS acq es release canonical form
+boolean acquire() throws InterruptedException { 
+  while(state does not permit acq) { 
+    if(blocking acq requested) { enqueue current thread if not already queued; block current thread; }
+	else return failure }
+  possibly update synchronization state; dequeue thread if it was queued; return success
+void release() { update synchronization state; if(new state may permit a blocked thread to acq) unblock one or more queued threads
+
+synchronizertol fuggoen az acq lehet exclusive mint RL-nel v nonexclusive mint Semaphore-nal v CDL-nel. acqnal a synchronizer eloszor eldonti h a current state permiteli-e az acqot; ha igen, akkor a thread tovabbhaladhat, ha nem akkor az acq blockol v failel. ez a dontes synchronizer semanticstol fugg; pl. lock acq sikerulhet ha a lockot nem tartja senki; latch acq sikerulhet ha a latch terminal statejeben van
+ezt kovetoen lehet h updateli a synchronizer statejet; egy acqolo thread befolyasolhatja h mas threadek tudjak-e acqolni. pl. lock acqolas "nem tartott"-rol "tartott"-ra valtja a lock statet; Semaphore permit acqolas csokk a maradek permitek szamat. latch acqolasa egy thread altal viszont nem bef h mas threadek tudjak-e acqolni, tehat nem valtja a statejet
+
+excl acqot tam synchronizernek impl kell a protected tryAcquire(), tryRelease(), isHeldExclusively() metodusokat; shared acqot tam synchronizereknek a tryAcquireShared() es tryReleaseShared() metodusokat. az AQS acquire(), acquireShared(), release() es releaseShared() metodusai a synchronizer subclassban levo try- valtozatokat hivjak meg annak eldontesere h az oper tovabbhaladhat-e. synchronizer subclass getState(), setState(), compareAndSetState() metodusokkal tudja csekkelni es updatelni a statet, es a return statussal informalni a base classt h az acq/release sikeres volt-e. pl. ha tryAcquireShared() negativ erteket returnol, az acq failuret jelent; 0 azt h a synchronizert excl acqoltak; poz ertek pedig azt h nonexcl acqoltak. tryRelease() es tryRelaseShared() truet returnol ha a release unblockolt a synchronizert acqolni kivano threadeket
+
+egyszerusitendo a cond queukat tam lockok impljat (pl. RL) az AQS tam a synchronizerekhez kapcs cond varokat
+
+[[[14.5.1. A Simple Latch]]]
+public class OneShotLatch {
+  private final Sync sync = new Sync();
+  public void signal() { sync.releaseShared();
+  public void await() throws InterruptedException { sync.acquireSharedInterruptibly(0);
+  private class Sync extends AbstractQueuedSynchronizer {
+    protected int tryAcquireShared(int ignored) { return getState() == 1 ? 1 : - 1; //succeed if latch open, else fail
+	protected boolean tryReleaseShared(int ignored) { setState(1); return true; //open latch; other threads may be able to acq
+
+binary latch AQS-el impl. await() es signal() metodusai az acq es release. latch alapbol closed; await()-et hivo threadek blockolnak amig a latch ki nem nyilik. amikor a latch a signal()-ra kinyilik, a waitelo threadek releaselodnek, es a tovabbiakban a latchez erkezo threadek tovabbhaladhatnak
+
+az AQS state tartalmazza a latch statet - closed (0) v open (1). await() az AQS acquireSharedInterrutibly()-t hivja, ami pedig a tryAcquireShared()-et. tryAcquireShared() return valuejanak azt kell jeleznie h az acq haladhat-e tovabb. ha a latch mar kinyilt, akkor successt returnol, es a thread atmehet; egyebkent azt jelzi h az acq failelt. acquireSharedInterruptibly() a failuret ugy interpretalja h a threadet a waiting threadek queuejara kell tenni. hasonloan signal() a releaseShared()-et hivja ami pedig a tryReleaseShared()-et. a tryReleaseShared() openre allitja a latchet es a returnnel jelzi h a synchronizer released stateben van. emiatt az AQS engedi a waitelo threadeknek h megprobaljak reacqolni a synchronizert, es az acq most sikeres lesz mert a tryAcquireShared() successt returnol
+
+ez egy teljesen mukodokepes synchronizer, bar persze hianyoznak belole olyanok mint timed acq v latch state csekkeles, de ezeket konnyu impl, mert az AQS nyujt timed acq metodusokat es common inspection util metodusokat
+
+delegalas helyett implhattuk volna az AQS extendalasaval is, de ez igy elrontotta volna az egyszeru ket-metodusos ifacet; emellett az AQS public metodusait a hivok hasznalhatjak igy rosszul is. java.util.concurrent-ben levo synchronizerek mindegyike private inner AQS subclassoknak delegal
+
+[[14.6. AQS IN JAVA.UTIL.CONCURRENT SYNCHRONIZER CLASSES]]
+java.util.concurrent-ben levo blocking classok tobbsege az AQS segitsegevel keszult, pl. RL, Semaphore, RRWL, CDL, SQ, FutureTask
+
+[[[14.6.1. ReentrantLock]]]
+csak excl acqot tam, ezert impl tryAcquire(), tryrelease(), isHeldExclusively()
+
+protected boolean tryAcquire(int ignored) { 
+  final Thread current = Thread.currentThread(); int c = getState();
+  if(c == 0) { if(compareAndSetState(0,1)) { owner = current; return true; } }
+  else if(current == owner) { setState(c+1); return true; } return false;
+
+nonfair tryAcquire(). sync stateben tarolja a lock acq countot, owner varban pedig az owning thread id-jet, amit csak akkor modif amikor a current thread eppen acqolta a lockot v eppen releaselni fogja (mivel a protected state-manip metodusoknak egy volatile read/write-nak megfelelo mem semanticsja van, es a RL csak a getState() utan readeli ownert, es csak a setState() utan writeolja; ezert a RL piggybackelheti a sync state mem semanticsjet es nem kell tovabbi sync, ld. 16.1.4)
+tryRelease()-ben csekkeli az ownert h a current thread tartja-e a lockot mielott engedelyezne egy unlock()-ot; tryAcquire()-ben ezzel tesz kulonbseget egy reentrant es egy contended acq kozott
+
+amikor egy thread lockot probal acqolni, tryAcquire() eloszor csekkeli a lock statet. ha nincs tartva, akkor megprobalja updatelni h jelezze h tartva van. mivel a state a csekkeles ota meg is valtozhatott , a tryAcquire() compareAndSetState()-el probalja updatelni a statet h jelezze h a lock tartva van, es h a state az utolso csekkeles ota nem valtozott (ld. 15.3). ha a lock state azt jelzi h tartva van, ha a current thread a lock ownere, akkor acq count++; ha nem a current thread a lock ownere akkor az acq failel
+
+RL kihasznalja h az AQS tam a tobb cond vart es wait setet. Lock.newCondition() egy ConditionObject instanceot returnol, ami az AQS egy inner classa
+
+[[[14.6.2. Semaphore and CountDownLatch]]]
+Semaphore az AQS sync statet haszn a currently available permitek szamanak tarolasara
+
+protected int tryAcquireShared(int acquires) { while(true) { int available = getState(); int remaining = available - acquires; if(remaining < 0 || compareAndSetState(available, remaining)) return remaining;
+protected boolean tryReleaseShared(int releases) { while(true) { int p = getState(); if(compareAndSetState(p, p+ releases)) return true;
+
+eloszor kiszam a remaining permitek szamat es ha nincs eleg, akkor failuret returnol. ha ugy tunik h van eleg permit, akkor compareAndSetState()-el atomic probalja csokk a permit countot. ha ez sikerul (azaz permit count nem modosult a csekkeles ota) akkor successt returnol. a return value azt is jelzi h mas thread acq kiserletek sikerulhetnek, ilyenkor mas waitelo threadek unblockolodnak
+
+while akkor terminal ha nincs eleg permit v h tryAcquireShared() atomic updatelni tudja a permit countot jelezve az acqot. bar a compareAndSetState() hivasok failelhetnek mas threaddel valo contention miatt (ld. 15.3) ezaltal retryt okozva, a ket termination criteria egyike elobb-utobb trueva fog valni. hasonloan tryReleaseShared() noveli a permit countot, ezzel unblockolhat waitelo threadeket, es retryol amig az update sikerul. a tryReleaseShared() return valueja jelzi h mas threadek unblockoladhattak a release soran
+
+CDL ehhez hasonloan haszn AQS-et: a sync state tartalmazza a current countot. countDown() release()-t hivja, ami counter--, es unblockolja a waitelo threadeket ha counter == 0; await() acquire()-t hivja, ami azonnal returnol ha counter == 0, egyebkent blockol
+
+[[[14.6.3. FutureTask]]]
+FT elsore nem is tunik synchronizernek. de Future.get() semanticsja nagyon hasonlit egy latchez - ha vmi event tortent (FT altal repr task completionje v cancellationje) akkor a threadek tovabbhaladhatnak, egyebkent queueolodnak amig az event be nem kovetkezik
+
+FT az AQS sync stateben tarolja a task statust - running, completed, cancelled. tovabbi state varokban tarolja a szamitas eredmenyeit v a dobott exct. reft tart a threadre ami a szamitast vegzi (amennyiben running stateben van) h interruptolni lehessen ha a task cancelled
+
+[[[14.6.4. ReentrantReadWriteLock]]]
+RWL iface arra utal h ket lock van, egy reader es egy writer, de a RRWL AQS-based impljaban egyetlen AQS subclass manageli a read es a write lockingot. RRWL a state 16 bitjet haszn a write lock countra, a masik 16 bitet pedig a read-lock countra. read lock operjei a shared acq es release metodusokat, write lock operjei az excl acq es release metodusokat hasznaljak
+
+internally az AQS egy waiting thread queuet maintainel, trackelve h egy thread excl v shared accesst kert-e. RRWL-ben ha a lock elerhetove valik, akkor ha a queue elejen levo thread write accesst kert akkor megkapja a lockot; ha a queue elejen levo thread read accesst kert akkor az osszes queueolt thread az elso writerig bezarolag megkapja a lockot
+ez a mech nem tesz lehetove reader-pref v writer-pref policy kozti valasztast. ahhoz az AQS queuenak vmi masnak kellene lennie, nem FIFO-nak, vagy ket queue kellene. de gyak ilyen szigoru ordering policy nem kell; ha a RRWL nonfair valtozata nem kinal elfogadhato livenesst, a fair valtozat alt megfelelo orderinget nyujt, es garantalja h nem lesz reader/writer starvation

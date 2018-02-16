@@ -1,0 +1,168 @@
+Java Concurrency in Practice
+
+[Chapter 15. Atomic Variables and Nonblocking Synchronization]
+java.util.concurrent-ben levo classok mint Semaphore v ConcurrentLinkedQueue jobb perft/scalt nyujtanak mint synchronizedet hasznalo alternativaik. ennek fo okai az atomic varok es nonblocking sync hasznalata
+
+nonblocking algok low-level atomic machine instructionokat (pl. CAS) hasznalnak lockok helyett a data integrity biztositasara conc access mellett. OS-ekben/JVM-ekben gyakran hasznaljak oket thread/process schedulingre, GCre, lockok es egyeb conc data structok impljara
+nehezebb designolni es impl oket mint lock-based alternativakat, de jelentos scal/liveness elonyok. finer granularity levellel dolgoznak, es jelentosen csokk a scheduling overheadet mert nem blockolnak amikor tobb thread contendel uazert a dataert. tovabba immunisak DL-re es egyeb liveness problemakra. lock-based algoknal mas threadek nem tudnak haladni ha egy thread lock tartas kozben sleepel v spinnel, nonblocking algok viszont erzeketlenek az individual thread failurekre. Java 5 ota hatekony nonblocking algok keszithetok atomic var classok (AtomicInteger, AtomicReference) felhasznalasaval
+
+atomic varok hasznalhatoak "better voltatile var"-kent is. uazt a mem semanticsot nyujtjak mint a volatile varok, de emellett tam az atomic updateket - idealisak counterek, seq generatorok, stat gathering megvalositasara, es jobb scal mint a lock based alternativainak
+
+[[15.1. DISADVANTAGES OF LOCKING]]
+ha konz locking protocollal koordinaljuk a shared state accesst, bizt h bmely thread tart egy var setet guardolo lockot, annak excl accesse lesz azokhoz a varokhoz, es a varokon vegzett bmilyen valt visible lesz mas threadek szamara akik kesobb acqoljak a lockot
+
+modern JVMek jol tudjak az uncontended lock acqot es releaset optimizalni, de ha tobb thread requesteli a lockot egyidoben, akkor a JVM az OS segitseget keri. ekkor vmelyik thread suspendelve lesz, es kesobb resumolodik (bar okos JVM nem szuksegkeppen suspendeli a threadet; korabbi lock tartasra von profiling data alapjan donthet a suspension es a spin locking kozott). amikor a thread resumolodik, lehet h waitelnie kell h mas threadek kitoltsek a schedule quantumjukat, mielott o schedulodhat. thread suspend/resumenak nagy overheadje van, es alt nagy kiesessel jar. fine-graid operekkel rendelkezo lock-based classok (pl. sync coll classok, ahol a legtobb metodusban csak nehany oper van) a scheduling overhead per useful work arany nagy lehet ha a lock frequently contended
+
+volatile varok egy lighterweight sync mech mint a locking, mert nincs benne ctx switch es thread scheduling. de vannak limitjei a lockinghoz kepest: bar hasonlo visibility garanciakat nyujtanak, nem hasznalhatoak atomic compound actionok krealasara. ez azt jel h volatile varok nem hasznalhatoak ha egy var egy masikon dependal, v ha var uj erteke a regi erteken dependal. ez limitalja h mikor hasznalhatok, pl. nem jok counterek v mutexek implhoz (gyak lehetseges de nem javasolt volatile semanticsel mutexet v egyeb synchronizereket krealni)
+
+pl. ++i atomic pernek tunhet, de valojaban harom distinct oper - fetch current value, increment, write the updated value back. ahhoz h az updatet ne vesszuk el, az egesz read-modify-write opernek atomicnak kell lennie. eddig ennek az egyetlen modja amit lattunk a locking volt, ld. 4.1 Counter
+Counter threadsafe, es contention nelkul v kis contentionnal jol muk. de contention mellett perf-- a ctx switch overhead es sched delayek miatt. amikor lockok csak rovid ideig vannak tartva, akkor a sleepbe kerules komoly buntetes azert h vki rossz idoben kerte a lockot
+
+locking egyeb hatranyai. ha thread lockra waitel akkor nem csinalhat mast. ha egy lockot tarto thread delayel (page fault, sched delay stb miatt) akkor semmilyen mas thread nem haladhat amelynek ez a lock kellene. ez komoly gond ha a blockolt thread high prio, a lockot tarto thread viszont low prio - ez a priority inversion nevu perf hazard. bar a nagyobb prioju threadnek lenne elonye, waitelnie kell amig a lock released es ezaltal a prioja effektive downgradelodik a lower prio thread szintjere. ha a lockot tarto thread permanently blocked (infinite loop, DL, LL, mas liveness failure), akkor a lockra varo mas threadek nem tudnak tobbe haladni
+
+locking meg ezek nelkul a hazardok nelkul is heavyweight mech az olyan fine-grained operekhez mint pl. counter incr. jobb lenne vmi finer-grained technika a threadek kozti contention manageleser - olyasmi mint a volatile varok, de az atomic update lehetosegevel egyutt. szerencsere a modern procok nyujtanak ilyet
+
+[[15.2. HARDWARE SUPPORT FOR CONCURRENCY]]
+excl locking pessimistic technika - a legrosszabbat felt, es nem halad tovabb amig nem tudjuk garantalni, a megfelelo lockok acqolasaval, h mas threadek nem fognak interferalni
+
+fine-grained opereknel gyakran hatekonyabb alternativa az optimistic approach: haladjunk tovabb az update-tel es remeljuk h interference nelkul be tudjuk fej. ez un collision detectionnel allapitja meg h volt-e interference masok reszerol az update alatt, ebben az esetben az oper failel es retryolhato (v nem). regi mondas: "it is easier to obtain forgiveness than permission" (itt "easier" = "more eff")
+
+multiproc operekre tervezett procok spec instructionokat nyujtanak shared varok conc access enek tamogatasara. regebben atomic test-and-set, fetch-and-increment, swap segitsegevel lehetett mutexeket impl, azokkal pedig osszetettebb conc objkat. mai modern procokban atomic read-modify-write instructionok, mint CAS, load-linked/store-conditional. OS es JVM ezek segitsegevel tud lockokat es conc data structokat impl
+
+[[[15.2.1. Compare and Swap]]]
+legtobb proc arch ezt impl (egyes procok a load-linked/store-conditional parost). CAS-nak harom operandusa: V mem loc, expected old value A, new value B. CAS atomically updateli V-t B-re, ha a V-ben levo value == A; egyebkent nem csinal semmit. mindket esetben a V-ben levo erteket returnoli (a compare-and-set nevu valtozat azt returnoli h sikeres volt-e az oper). CAS jelentese: "azt hiszem V-ben A-nak kell lennie; ha igy van akkor tedd bele B-t, egyebkent ne csinalj semmit, de szoljal ha tevedtem". CAS optimistic: tovabbhalad az update-tel a siker remenyeben, es detektalni tudja a hibat ha egy masik thread updatelte a vart miota utoljara csekkeltuk
+
+public class SimulatedCAS {
+  private int value; public synchronized int get() { return value; }
+  public synchronized int compareAndSwap(int expectedValue, int newValue) { int oldValue = value; if(oldValue == expectedValue) value = new Value; return oldValue;
+  public synchronized boolean compareAndSet(int expectedValue, int newValue) { return expectedValue == compareAndSwap(expectedValue, newValue);
+  
+ha tobb thread probalja egyidoben updatelni uazt a vart CAS-al, akkor az egyik gyoz es updatel, tobbi veszit. de a vesztesek nem suspendalodnak, mint amikor lock acqjuk failel; helyette megtudjak h most nem nyertek meg a racet de retryolhatnak. mivel egy CAS-t elveszto thread nem lesz blocked, donthet h retryol, vmi recovery actiont csinal v nem csinal semmit (semmit nem csinalni teljesen jo valasz lehet egy failed CAS-ra; egyes nonblocking algokban ld. 15.4.2 a failed CAS azt jelenti h vki mas mar megcsinalta amit mi akartunk). ez a flex eliminal szamos a lockingnal jelenlevo liveness hazardot (bar bizonyos esetekben behozhatja a livelock risket, ld. 10.3.3)
+
+tip CAS use pattern: read A value from V, derive new B value from A, CAS segitsegevel atomically valt V-t A-rol B-re amennyiben mas thread kozben nem valt V-t. CAS az atomic read-modify-write implt locking nelkul csinalja meg, mert detectalni tudja mas threadek reszerol az interferencet
+
+[[[15.2.2. A Nonblocking Counter]]]
+public class CasCounter {
+  private SimulatedCAS value; public int getValue() { return value.get(); }
+  public int increment() { int v; do { v = value.get(); } while( v != value.compareAndSwap(v, v +1)); return v + 1;
+  
+threadsafe counter CAS segitsegevel. increment fetcheli az old valuet, transformalja az uj valueba (1-et hozzaadva) es CAS segitsegevl besetteli az uj valuet. ha a CAS failel, akkor az oper azonnal retryolodik. folyamatos retry alt jo strategia, bar extrem contention eseteben celszeru waitelni v backoffolni a livelock elkerules erdekeben
+
+CasCounter nem blockol, bar szamos alkalommal retryolhat ha egyidoben mas threadek is updatelik a countert (elvileg akarmennyiszer ha mindig mas threadek nyerik meg a CAS race, de gyak ez a fajta starvation ritka). gyak ha countert v seq generatort akarunk, akkor hasznaljunk AtomicIntegert/AtomicLongot amelyek atomic increment es egyeb aritmetikai metodusokat nyujtanak
+
+elsore a CAS counter ugy nez ki mintha rosszabb perf lenne mint lock-based counter; tobb oper es komplexebb control flow, es egy latszolag komplex CAS operen alapul. de tenylegesen a CAS counterek perfje lenyegesen jobb meg kis contention mellett is, es gyakran meg contention nelkul is. az uncontended lock acq tip min egy CAS-t igenyel plusz egyeb lock related housekeepinget, tehat a lock based counter best caseben is tobb work van, mint a CAS counter normal caseben. mivel a CAS legtobb esetben sikerul (low to moderate contentiont felt) a HW predicteli a while loopon beluli branchet, ezzel minimalizalva a control logic jelentette overheadet
+
+locking syntax egyszeru, de a JVM+OS altali lock mgmt nem az. locking egy komplex code path traversalasat jelenti a JVM-ben, plusz esetleg OS-level lockingot, thread suspensiont, ctx switcheket. best caseben a locking min egy CAS-t igenyel, azaz bar nem latjuk de ilyenkor is van CAS. CAS-t prgbol execelve viszont nem jelent JVM kodot, system callokat v scheduling activityt. ami app szinten hosszabbnak tunik az a JVM/OS-t figyelembe veve valojaban rovidebb. CAS fo hatranya h a hivonak kell fogl a contentionnal (retry, backoff, give up) mig a locking autom fogl vele azaltal h blockol amig a lock available nem lesz (emellett a CAS-t korulvevo algok helyes megalkotasa is nehez)
+
+CAS perf proctol fugg. single-CPU-nal egy CAS nehany clock cycle, mivel nem kell procok kozti sync. konyv irasakor egy multiprocon kiadott uncontended CAS 10-150 cycle; de a CAS perf moving target es meg egy proc klf verzioin is mas lehet. jo okolszabaly: uncontended lock acq es release ktge a legtobb procon 2xese egy CAS ktgenek
+
+[[[15.2.3. CAS Support in the JVM]]]
+hogy gyozi meg a Java kod a procot h hajtson vegre egy CASt? Java 5 elott csak native koddal lehetett. Java 5-ben low-level support kerult be ami exposolta a CAS opereket inten, longon, obj refen, es a JVM ezeket az underlying HW-tol fuggoen a leghatekonyabban compilolja. CAS-t supportalo platformokon a runtime inlineolja oket a megfelelo machine instructionokba; worst case ha nincs CAS-like instruction, ilyenkor a JVM spin lockot haszn. ezzel a low-level JVM supporttal nyujtanak hatekony CAS opert az AtomicXXX var classok a numeric es ref tipusokon; es ezek az atomic var classok vannak hasznalva a java.util.concurrent classok tobbsegenek impljaban
+
+[[15.3. ATOMIC VARIABLE CLASSES]]
+atmic varok finer-grainedek es lighter-weightek mint a lockok, es fontosak ha high-perf conc kodot akarunk irni multiproc sysekre. contention scopejat egy single varra limitaljak; ennel finebb gran nincsen. atomic var updateles fast (uncontended) pathja nem lassabb mint a lock acq fast pathja, sot alt gyorsabb; a slow path biztosan gyorsabb mint a lock acq slow pathja mert nincs benne thread suspend/reschedule. a nem lockokat hanem atomic varokat haszn algokban a threadek valoszinubb h delay nelkul tudnak haladni, contention eseten pedig konnyebben recoverelnek
+
+atomic var classo a volatile varok egy altalanositasat nyujtjak, h tam az atomic cond read-modify-write opereket. AtomicInteger egy int valuet repr, es get()/set() metodusokat nyujt uazzal a mem semanticsal mint a volatile int varok read/writeja. atomic compareAndSet() metodust is nyujt (siker eseten uaz a mem effectje mint volatile var read/writejanak), vmint convenience atmic add, increment es decrement metodusokat. AtomicInteger kicsit hasonlit egy extended Counter classra, de contention mellett jobban scal, mert jobban ki tudja haszn az underlying HW conc supportjat
+
+12 atomic var class van; 4 csoportba osztva: scalars, field updaters, arrays, compound vars. leggyakoribbak a scalarok: AtomicInteger/Long/Boolean/Reference. mindegyik tam CASt, Integer es Long az arithmeticet is (ha mas primitiv tipusokon akarunk atomic vart szimulalni akkor castoljunk int es short/byte kozott, floating numberekhez pedig haszn floatToIntBits/doubleToLongBits-t)
+
+atomic array classok (Integer, Long, References) arrayek amelyek elemei atomically updatelhetoek. volatile access semanticsot nyujtanak az array elemeihez, ezt egy normal array nem tudja - volatile arraynak csak az array refre van volatile semanticsja, az elemekre nem
+
+atomic scalar classok Numbert extendaljak, nem a primitive wrapper classokat (Integer, Long). nem is tudnak mert azok immutok, mig az atomic var classok mutablek. atomic var classok nem redefinialjak equals()/hashCode()-ot, minden instance distinct. mint a mutable objkat altalaban, nem jo oket hash-based collokban keykent haszn
+
+[[[15.3.1. Atomics as “Better Volatiles”]]]
+3.4.2-ben volatile reft hasznaltunk egy immut objra, h atomically updateljunk tobb state vart. az a pelda check-then-act-on alapult, de ott a race artalmatlan volt mert nem volt erdekes ha idonkent elveszett egy update. de a legtobb esetben nem igy van, es data integrity serulhet. pl. 4.3.3 NumberRange nem lenne safely implhato volatile reffel az upper/lower boundot tartalmazo immut holder objkra, sem ugy ha atomic integerekben tartanank a boundokat. mivel egy invariant tartalmazza a ket erteket es nem tudnank az invariant megorzese mellett egyszerre updatelni oket , ezert egy volatile refeket v atomic integereket haszn number range classban unsafe check-then-act seqek lennenek
+
+race cond megszuntetheto ha OneValueCachet otvozzuk atomic refekkel, es atomically updateljuk a reft egy immut objra ami a lower es upper boundokat tart
+public class CasNumberRange {
+  private static class IntPair { final int lower; final int upper; //invariant: lower <= upper
+  private final AtomicReference<Intpair> values = new AtomicReference<>(new IntPair(0,0));
+  public int getLower() { return values.get().lower; } public int getUpper() { return values.get().upper; }
+  public void setLower(int i) { while(true) { intPair oldv = values.get(); if(i > oldv.upper) throw new IllegalArgumentException("cant set lower > upper"); IntPair newv = new IntPair(i, oldv.upper); if(values.compareAndSet(oldv, newv)) return; } //setUpper() hasonloan
+IntPair-re von AtomicReference tart a state; compareAndSet()-el updatelhetjuk az upper es lower boundokat a NumberRange race condjai nelkul
+
+[[[15.3.2. Performance Comparison: Locks Versus Atomic Variables]]]
+benchmark: pseudorandom number generator. kov "random" szam az elozobol szarmazik, tehat emlekeznie kell az elozo szamra a stateje reszekent
+ket threadsafe PRNG, az egyik ReentrantLock-al a masik AtomicInteger-el. test driver ezeket invokolja folyamatosan; minden iter egy rnd szamot general (fetcheli a shared seed statet) es vegrahajt vmi "busy workot" szigoruan threadlocal datan. ez tip opereket szimulal, amelyek reszben shared reszben threadlocal staten dolgoznak
+ha a threadlocal szam resz kicsi akkor a contention high; ha nagy akkor a contention low, mivel a lockot/atomic vart kevesebbszer akarjak accessalni
+
+throughput: high contention mellett a locking felulmulja az atomic varokat, de alacsonyabb, realisabb contention mellett az atomic varok a jobbak (~ nagy forgalom mellett jobb a jelzolampa, kisebb forgalom mellett jobb a korforgalom. kis traffic mellett jobb az ethernet nw contention scheme, de nagyobb traffic mellett jobb a token ring nw token-passing scheme). ez azert van mert a lock a contentionra threadek suspendalasaval reagal, ezaltal csokk a CPU usage es a sync traffic a shared mem buson (~ blocking producerek csokk a consumerek loadjat es igy hagyjak oket catchupolni). atomic varoknal a contention mgmt vissza van pusholva a hivo classba. mint a legtobb CAS-based algo, az AtomicPseudoRandom is azonnali retryal reagal a contentionra, ami alt helyes approach de nagy contention eseten csak meg nagyobb contentiont kreal
+
+de a tesztbeli high contention level irrealisan magas; nincs olyan tenyleges prg ami semmi mast nem csinal csak lockert/atomic varert contendel. gyak az atomicok jobban scal mint a lockok mert jobban kezelik a tip contention leveleket
+
+kul contention leveleken mutatott ellentetes perf mutatja a lockok es atomicok erossegeit es gyengesegeit. low es moderate contention mellett az atomicok jobban scal; high contention mellett a lockok jobb contention avoidancet nyujtanak (CAS-based algok single CPU syseken jobbak mint a loc-basedek, mivel single CPU syseken a CAS mindig sikerul, kiveve azt a ritka esetet amikor egy threadet a read-modify-write kozepen preemptalnak)
+
+a benchmarkban van meg egy harmadik PRNG is, ami ThreadLocalban tartja a statet. ez megvalt a class behavjat, mert minden thread a sajat random szam seqjet latja, es nem minden thread uazt a seqt shareli; de latszik belole h gyakran celszerubb nem sharelni a statet ha nem szukseges (throughputja sokkal jobb mint a masik kettoe). jo contention mgmt scal++, de az igazi scalt akkor erjuk el ha teljesen eliminaljuk a contentiont
+
+[[15.4. NONBLOCKING ALGORITHMS]]
+lock based algoknalliveness failure riskek. ha egy lockot tarto thread delayed blocking IO, page fault v mas ok miatt, lehet h egyetlen thread sem fog haladni. algo akkor nonblocking, ha egy thread failureje v suspensionja nem okozhatja egy masik thread failurejet v suspensionjet; algo lock-free ha minden stepjenel _valamilyen_ thread tud haladni. algo amely kizarolag CASt haszn threadek kozti koordra, lehet egyszerre nonblocking es lock-free. uncontended CAS mindig sikerul, es ha tobb thread contendel egy CASert, az egyik biztosan gyoz es ezert tovabb tud haladni. nonblocking algok immunisak a DL-re es prio inversionra (DL es LL lehet az ismetelt retryok miatt). eddig egy nonblocking algot lattunk, a CasCountert. jo nonblocking algok common data structjai: stack, queue, prio queue, hash table
+
+[[[15.4.1. A Nonblocking Stack]]]
+nonblocking algok lenyegesen komplexebben mint lockingos ekvivalenseik. kulcs h hogyan limitaljuk az atomic valtoztatasok scopejat egy single varra, mikozben megtartjuk a data consistencyt. linked coll classoknal mint a queuek, a state transformationok neha kifejezhetok egy link modositasaval, es AtomicReferencek repr azokat a linkeket amelyeket atomic kell updatelni
+
+stack a legegyszerubb linked data struct: minden elem csak egyetlen masik elemre ref, es minden elemre csak egy obj ref mutat. 
+
+public class ConcurrentStack<E> {
+  private static class Node<E> { public final E item; public Node<E> next; public Node(E item) { this.item = item;
+  AtomicReference<Node<E>> top = new AtomicReference<>();
+  public void push(E item) { Node<E> newHead = new Node<>(item); Node<E> oldHead; do { oldHead = top.get(); newHead.next = oldHead; } while(!top.compareAndSet(oldHead, newHead));
+  public E pop() { Node<E> oldHead; Node<E> newHead; do { oldHead = top.get(); if(oldHead == null) return null; newHead = oldHead.next; } while(!top.compareAndSet(oldHead, newHead)); return oldHead.item;
+
+Node elemek linked listje, rootjuk a top, es mindegyik egy valuet es a kov elemre mutato linket tart. push() egy uj link nodeot kreal aminek a next-je a stack jelenlegi topjara mutat, es aztan CAS segitsegevel probalja berakni a stack topjara. ha meg mindig uaz a node van a stack topjan mint amikor elkezdtuk, akkor a CAS sikerul; ha a top node megvaltozott (mert masik thread addolt v removolt elemeket kozben) akkor a CAS failel es a push() a current stack statenek megfeleloen updateli az uj nodeot es retryol. a stack mindket esetben konz allapotban lesz a CAS utan
+
+CasCounter es ConcurrentStack illusztralja nonblocking algokat: work egy resze spekulativan van vegrehajtva es lehet h ujra kell majd csinalni. ConcurrentStacknel amikor megkrealjuk az uj elemet repr Node-ot akkor remeljuk h a next ref valueja meg mindig korrekt lesz amikor a stack tetejere probaljuk tenni, de fel vagyunk keszulve h contention eseten retryolnunk kell
+
+nonblocking algok mint a ConcurrentStack threadsafetyje abbol szarm, h mint a locking, a compareAndSet atomicity es visibility garanciakat nyujt. ha egy thread megvaltoztatja a stack statejet, akkor azt compareAndSet-el teszi, aminek a mem effectje uaz mint volatile write. ha egy thread csekkeli a stacket akkor uazon az AtomicReferencen hiv get()-et aminek a mem effectje uaz mint volatile read. tehat bmely thread altali valtoztatas safely published minden mas thread szamara amely a list statejet csekkeli. a list modif pedig compareAndSet-el tortenik amely v atomically updateli a top reft v failel ha mas thread altali interferencet eszlel
+
+[[[15.4.2. A Nonblocking Linked List]]]
+az eddig latott ket nonblocking algo, a counter es stack, illusztraltak a basic patternt: spekulativ value update CAS-al, es retry ha az update failel. nonblocking algok krealasanak trukkje az atomic changek scopejanak egy single varra torteno limitalasa. countereknel ez trivialis, stacknal straightforward, de komplexebb data structoknal mint queue, hashtable v tree trukkosebb
+
+linked queue komplexebb mint stack, mert gyors accesst kell nyujtania a headhez es tailhez. ehhez kulon head es tail pointereket maintainel. a tail nodera ket pointer ref: a jelenlegi utolso elem next pointere es a tail pointer. uj elem beinsertelesehez a ket pointert atomically kell updatelni. elso ranezesre ez atomic varokkal nem megy; kulon CAS operek kellenek a ket pointer updatelesehez, es ha az elso sikerul de a masodik failel akkor a queue inkonz stateben marad. es ha mindket oper sikerul, akkor is lehet h a ketto kozott mas thread megprobalja accessalni a queuet. ha linked queuera akrunk nonblocking algot, akkor mindket esetet kezelnunk kell
+
+ehhez tobb trukk szukseges. az elso annak biztositasa h a stat struct mindig konz allapotban van, meg multistep update kozepen is. ekkor ha a A thread epp egy update kozepen van amikor B thread megerkezik, B tudni fogja h az oper csak partially completed es nem fogja azonnal megprobalni a sajat updatejet. B waitelhet (folyamatosan csekkelve a queue statet) amig A nem vegez, igy nem allnak egymas utjaba
+
+ez a trukk lehetove teszi h threadek "felvaltva" accessaljak a data structot anelkul h corruptalnak, de ha egy thread egy update kozeen failel, akkor mas threadek nem fogjak tudni accessalni a queuet. h az algo nonblocking legyen, biztositanunk kell h egy thread failureje nem prevental mas threadeket a haladasban. ezert biztositani kell h ha B erkezeskor azt latja h A epp egy update kozepen van, akkor a data structban legyen annyi info eltarolva, h B be tudja fejezni A updatejet. ha B "segit" A-nak az operjet befejezni, akkor B haladhat a sajat operjevel anelkul h A-ra kellene waitelnie. mikor A befejezne az operjet, azt fogja latni h B mar befejezte helyette
+
+ConcurrentLinkedQueue-ban is hasznalt nonblocking linked queue algo insertion resze
+public class LinkedQueue<E> {
+  private static Node<E> { final E item; final AtomicReference<Node<E>> next; public Node(E item, Node<E> next) { this.item = item; this.next = new AtomicReference<>(next);
+  private final Node<E> dummy = new Node<>(null, null);
+  private final AtomicReference<Node<E>> head = new AtomicReference<>(dummy); private final AtomicReference<Node<E>> tail = new AtomicReference<>(dummy);
+  public boolean put(E item) {
+    Node<E> newNode = new Node<>(item, null);
+	while(true) { 
+	  Node<E> curTail = tail.get(); Node<E> tailNext = curTail.next.get();
+	  if(curTail == tail.get()) {
+	    if(tailNext != null) tail.compareAndSet(curTail, tailNext); //queue in intermediate state, advance tail
+		else { //in quiescent (nyugalmi) state, try inserting new node
+		  if(curTail.next.compareAndSet(null, newNode)) { tail.compareAndSet(curTail, newNode); return true; //insertion succeeded, try advancing tail
+
+empty queue egy sentinel/dummy node-bol all, es a head es tail pointerek erre ref. a tail pointer mindig a sentinelre (ha a queue ures), a queue utolso elemere v a second-to-last elemre (ha az update oper kozepen van) ref
+ket elemu queue quiescent state: head -> dummy -> 1 -> 2, tail -> 2
+
+uj elem beinsertelese ket pointer updateleset jelenti. az elso a lista vegere linkeli saz uj elemet a jelenlegi utolso elem next-jenek updatelesevel; a masodik a tail pointert allitja az uj utolso elemre. a ketto kozott a queue intermediate stateben van, a masodik utan ujra a quiescent stateben
+intermediate: head -> dummy -> 1 -> 2 -> 3, tail -> 2
+quiescent: head -> dummy -> 1 -> 2 -> 3, tail -> 3
+
+a trukkoket az teszi lehetove h ha a queue a quiescent stateben van akkor a tail altal mutatott node next-je null, ha pedig az intermediate stateben van akkor a tail.next non-null. tehat bmely thread meg tudja mondani a queue statejet a tail.next-et megvizsgalva. tovabba ha a queue az intermediate stateben van, akkor restorolhato a quiescent statebe a tail pointert egy node-al eloremozgatva, ezzel befejezve az opert az insert kozepen jaro thread szamara
+
+LinkedQueue.put() eloszor csekkeli h queue intermediate stateben van-e mielott megprobal uj elemet insertelni. ha igen, az azt jelenti h vmelyik masik thread eppen egy inserteles kozepen jar. nem varja meg h az a thread befejezze az insertet, hanem segit neki a tail pointer eloremozgatasaval. aztan megismetli ezt a csekkelest, hatha egy masik thread azota megkezdett egy insertelest, egeszen addig amig quiescent stateben nem latja a queuet
+
+az uj nodeot a queue tailre linkelo CAS failelehet ha ket thread probal egyszerre insertelni. ilyenkor nincs problema: nem tortent valtoztatas, es a current thread egyszeruen reloadolhatja a tail pointert es ujra megprobalhatja. amikor sikerul, az insertion sikeresnek tekintheto; a masodik CAS egy "cleanup" amit v az insertelo thread v egy masik thread hajt vegre. ha ez failel, akkor az insertelo thread nem retryol hanem returnol, mert ez azt jelenti h egy masik thread kozben mar befejezte az insertet. ez azert mukodik mert mielott egy thread megprobal egy uj nodeot belinkelni a queueba, eloszor csekkeli h a queuenak szuksege van-e cleanupra, megvizsgalva h a tail.next non-null. ha igen akkor eloremozgatja a tail pointert (lehet h tobbszor is) amig a queue a quiescent statebe nem kerul
+
+[[[15.4.3. Atomic Field Updaters]]]
+fenti algo illusztralja a ConcurrentLinkedQeueue implt, de a tenyleges impl ettol kicsit eltero. a Node-ok valojaban nem atomic reffel, hanem egy normal volatile reffel vannak repr, es egy reflection-based updater updateli oket
+private class Node<E> { 
+  private final E item; private volatile Node<E> next; public Node(E item) { this.item = item;
+  private static AtomicReferenceFieldUpdater<Node,Node> nextUpdater = AtomicReferenceFieldUpdater.newUpdater(Node.class, Node.class, "next");
+  
+az atomic field updater classok (Integer, Long, Reference) egy volatile field refl-based "viewjat" repr, h tudjunk rajta CAS-t hasznalni. az updater classoknak nincs konstruktora, krealashoz newUpdater() factory metodus, a class es a field nevet kell megadni. a field updater classok nincsenek instancehoz kotve; hasznalhatoak bmely target class instance target fieldjenek updatelesere. az updater classok atomicity garanciai gyengebbek mint a normal atomic classoknal, mert nem tudjuk garantalni h az underlying fieldek nem lesznek direktben modifolva - compareAndSet() es az arithmetic metodusok csak akkor garantaljak az atomicityt, ha mas threadek hasznaljak az atomic field updater metodusokat
+
+ConcurrentLinkedQueueban a Node next-jenek updatelese a nextUpdater compareAndSet() metodusaval tortenik. ez perf okok miatt van. gyakran allocolt, short-lived objkra mint queue link nodeok, ha eliminaljuk azt h minden Node-hoz kelljen egy AtomicReference-t krealni, az jelentosen csokk az insert oper ktget. de a legtobb esetben a normal atomic varok jol teljesitenek, az atomic updaterekre csak keves esetben van szukseg (atomic field updaterek akkor is hasznosak ha ugy akarunk atomic updateket vegrehajtani h kozben preservaljuk egy class serialized formajat)
+
+[[[15.4.4. The ABA Problem]]]
+anomalia ami a CAS algok naiv hasznalatabol ered, ahol a nodeok recyclolhatoak (elsosorban olyan envekben ahol nincs GC). CAS azt kerdi "V erteke meg mindig A?" es tovabbhalad az update-tel ha igen. legtobb esetben, igy az eddigi peldakban, ez eleg. de neha azt akarjuk kerdezni h "V erteke megvaltozott azota h utoljara A-nak lattuk?". egyes algoknak a V megvaltozasa A-rol B-re majd vissza A-ra azt jelenti h retryolniuk kell vmilyen stepet
+
+olyan algoknal jon elo amelyek a sajat mem mgmtjuket hasznaljak link node objkra. ilyenkor az h a list head meg mindig egy korabban mar observelt nodera mutat, nem jelenti azt h a list tartalma kozben nem valtozott. ha nem tudjuk az ABA problemat ugy lekerulni h a GC managelje nekunk a link nodeokat, akkor a mo: a ref value updatelese helyett updateljuk a ref valuet ES egy verzioszamot. meg ha a value ABA modon valtozott is, a verzioszam kul lesz. AtomicStampedReference (es AtomicMarkableReference) atomic cond updatet nyujt egy valtozoparon
+
+AtomicStampedReference egy obj ref-integer part updatel, ezzel "verziozott" refeket nyujt, amelyek immunisak az ABA problemara. hasonloan az AtomicMarkableReference egy obj ref-boolen part updatel, amit egyes algok arra haszn h egy node a listben maradjon, de egyuttal deletedre markoljuk
