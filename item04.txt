@@ -1,0 +1,11 @@
+ITEM 4: ENFORCE NONINSTANTIABILITY WITH A PRIVATE CONSTRUCTOR
+
+neha olyan classt akarunk irni ami csak static metodusok es fieldek groupingja. ezeknek rossz a hire, mert egyesek csak azert haszn oket h ne objkban kelljen gondolkodniuk, de van valid use: primitiveken v arrayokon dolgozo related metodusok groupolasa, ld. java.lang.Math v java.util.Arrays. hasznalhatok static metodusok groupolasara, beleertve a factorykat (item 1), olyan objkra amelyek vmilyen ifacet impl, ld. java.util.Collections (Java 8-tol az ilyen metodusokat magaba az ifacebe is rakhatjuk ha mienk az iface). vmint hasznalhatoak "group methods on a final class", mivel subclassba nem tehetjuk
+
+az ilyen utility classokat nem instantialasara designoljuk: instancenak nem lenne ertelme. expl konstr hijan a compiler public, param nelkuli default konstrt nyujt. user szamara ez nem kul a tobbi konstrtol. nem ritka h public APIban nem szandekosan instantialhato classok fordulnak elo
+
+noninstabiality enforcolasa a class abstractta tetelevel nem muk. az ilyenek subclassolhatoak es a subclass instantialhato. emellett felrevezeto mert user azt hiheti h a classt inheritancere designoltak (item 19). mivel default konstr csakkor generalodik ha a classban nincs expl konstr, ezert a class noninstantiable teheto egy private konstr hozzaadasaval
+public class UtilityClass { private UtilityClass() { throw new AssertionError(); }  //suppress default constructor for noninstantiability
+mivel az expl konstr private ezert classon kivulrol nem accessible. AssertionError nem szukseges de biztositas arra az esetre ha a konstrt szandekon kivul invokoljuk a classon belulrol. ez igy garantaljah a class semmilyen korulmenyek kozt nem lesz instantialva. az idiom counterintuitivenek tunhet, mivel a konstrt azert csinaljuk h aztan ne invokoljuk, ezert erdemes kommentel jelezni a celt mint fent
+
+side effect: preventalja a subclassingot. minden konstrnak egy superclass konstrt kell invokolnia, expl v impl modon, es igy nem lesz a subclass szamara accessible konstr amit invokolhatna

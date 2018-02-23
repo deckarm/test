@@ -1,0 +1,35 @@
+ITEM 7: ELIMINATE OBSOLETE OBJECT REFERENCES
+
+GC nyelvek mint Java autom reclaimelik az objkat vs manual mem mgmt nyelvek mint C,C++. de ettol meg gondolnunk kell a mem mgmtre
+
+public class Stack {
+  private Object[] elements; private in size = 0; private static final int DEFAULT_INITIAL_CAPACITY = 16;
+  public Stack() { elements = new Object[DEFAULT_INITIAL_CAPACITY];
+  public void push(Object e) { ensureCapacity(); elements[size++] = e;
+  public Object pop() { if(size == 0) throw new EmptyStackException(); return elements[--size];
+  private void ensureCapacity() { if(elements.length == size) elements = Arrays.copyOf(elements, 2*size + 1);
+  
+latszolag semmi gond nincs vele (ld. item 29 generic valtozat), de valojaban "memory leak" van benne ami csendben perf-- okozhat a megnott GC activity v mem footprint miatt. extrem esetben ezek disk paginghoz v akar OutOfMemoryError prg failurehez is vezethetnek bar ritkan
+
+ha a stack no majd csokk, a kipopolt objk nem lesznek GC-zve, meg ha a stacket haszn prg mar nem is tart rajuk refet. ez azert van mert a stack obsolete refeket tart rajuk. obs ref egy olyan ref ami sose lesz derefelve. ebben az esetben az element array "aktiv reszen" (amelyekre index < size) kivul bmely ref obs
+
+GC nyelvekben a mem leakek (mas neven uncond obj retentionok) nagyon veszelyesek. ha egy obj refet szandekon kivul megtartunk, nem csak az az obj lesz kizarva a GC-bol, hanem az altala ref tovabbi objk is stb. meg ha csak nehany nem szandekoltan tartott obj ref van, akkor is rengeteg obj GCjet preventalhatjak, jelentos perf-- mellett
+
+mo: ki kell nullozni a refeket ha obs valnak. Stack eseteben ez akkor van amikor az item kipopolodik
+public Object pop() { if(size == 0) throw new EmptyStackException(); Object result = elements[--size]; elements[size] = null; return result;
+
+obs refek kinullozasanak jarulekos benefitje h ha kesobb tevedesbol derefeljuk oket, akkor a prg azonnal NPE-t dob ahelyett h csendben rosszul mukodne. prgozasi hibakat jobb ASAP detektalni
+
+neha tulkopenzaljak azzal h minden refet kinulloznak amikor a hasznalatuk veget er. ez nem szukseges/kivanatos, foloslegesen cluttereli a prgt. refek kinullozasa a kivetel legyen es ne a szabaly. obs ref eliminalasanak legjobb modja ha a refet tart var "fall out of scope". ez naturally megtortenik ha minden vart a leheto legszukebb scopeban def (item 57)
+
+a Stack lenyegeben azert van kiteve a mem leaknek, mert a sajat memjet manageli. a storage poolt az elements array elemi kepezik (az obj ref cellek, nem maguk az objk). az array aktiv reszeben levo elemek allocated, a tobbi elem free. a GC ezt nem tudja, az o szamara az elements arraybeli minden obj ref egyforman valid. csak a prgozo tudja h az array inaktiv resze nem erdekes. prgozo ezt ugy tudja komm a GC fele, h kinulloza az array elemeket mihelyt az inaktiv reszbe kerulnek
+
+ha egy class sajat maga manageli a memjet akkor a prgnak figyelnie kell a mem leakekre. ha egy elem felszabadul, az elem altal tart obj refeket ki kell nullozni
+
+mem leak masik gyakori forrasa a cache. ha berakunk egy obj reft egy cachebe, akkor konnyu elfelejteni h ott van es benne hagyni joval azutan is h mar nem relevans. erre tobb mo is van. ha olyan cachet impl amelyben minden elem addig relevans amig a keyere vannak refek a cachen kivulrol, akkor legyen a cache WeakHashMap; az entryk autom removolodnak miutan obs valnak. WeakhashMap csak akkor jo ha a cache entryk elettartalmat a keyre mutato external refek hat meg es nem a value
+
+gyakrabb h egy cache entry elettartama kevesbe jol def, az entryk idovel kevesbe valuablek lesznek. ilyenkor a cachebol idonkent ki kell cleanelni a disused entryket. ez tortenhet egy background threaddel (pl. ScheduledThreadPoolExecutor) v uj entryk hozzaadasanak side effectjekent. LinkedHashMap tam az utobbit a removeEldestEntry() metodusaval. szofisztikaltabb cachehez java.lang.ref direkt hasznalata kellhet
+
+mem leak harmadik gyakori forrasa listenerek es egyeb callbackek. ha olyan APIt impl ahol a clientek callbackeket registralnak de nem deregistraljak oket expl, akkor ezek akkumulalodnak ha nem teszunk vmit. egyik mod annak bizt h callbackek GC-zodjenek, ha csak weak refeket tartunk rajuk, pl. ha csak WeakHashMap keykent taroljuk oket
+
+mivel a mem leakek gyakran nem kerulnek felszinre, akar evekig is a sysben maradhatnak. tip csak alapos code insp + heap profiling eredmenyekent derulnek ki. ezert celszeru megprobalni elebe menni

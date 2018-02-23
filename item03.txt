@@ -1,0 +1,30 @@
+ITEM 3: ENFORCE THE SINGLETON PROPERTY WITH A PRIVATE CONSTRUCTOR OR AN ENUM TYPE
+
+singleton egy olyan class ami egyszer van instantialva. singletonok tip v egy stateless objt repr, mint pl. function (item 24) v system componentet ami intrinsic unique. ha singletonna teszunk egy classt akkor a clientjeit nehez tesztelni, mert nem lehet egy mock implra cserelni a singletont, hacsak nem impl egy ifacet amely a typejakent szolgal
+
+singleton impl ket modja. mindkettonel private a konstr, es a sole instance egy public static memberben van exportalva
+
+elso approach: a public member egy final field
+public class Elvis {
+  public static final Elvis INSTANCE = new Elvis();
+  private Elvis() {...}
+  public void leaveTheBuilding() {...}
+private konstr csa egyszer hivodik, a public static final field initelesere. public/protected konstr hianya garantalja h pontosan egy Elvis instance lesz miutan az Elvis class initelodott. client nem tudja ezt megvalt, kiveve ha refl meghivja a private konstrt (item 65) AccessibleObject.setAccessible() metodus segitsegevel. ha ez ellen vedekezni akarunk akkor a konstr dobjon exct amennyiben masodik instanceot akarnak vele krealtatni
+
+masodik approach: a public member egy static factory metodus
+public class Elvis {
+  private static final Elvis INSTANCE = new Elvis();
+  private Elvis {...}
+  public static Elvis getInstance() { return INSTANCE; }
+  public void leaveTheBuilding() {...}
+minden Elvis.getInstance() hivas uazt az obj reft adja vissza, es sosem lesz mas Elvis instance krealva (emlitett refl eset kivetelevel)
+
+public field approach elonye h az APIbol egyertelmu h a class singleton: a public static field final, tehat mindig uazt az obj reft tart. masik elony h egyszerubb
+static factory approach elonye h API valt nelkul modosithatunk azon h a class singleton v nem. a factory metodus modosithato pl ugy h separate instanceot returnoljon minden invokolo threadnek. masik elony h irhatunk generic singleton factoryt ha arra van szukseg (item 30). emellett egy method reference hasznalhato supplierkent, pl. Elvis::instance az egy Supplier<Elvis>. ha ezen elonyok egyiket sem akarjuk kihaszn akkor a public field approach a pref
+  
+ahhoz h az ezeket az approachokat haszn singleton classt serializable tegyuk (ch 12) nem eleg implements Serializable. singleton garancia maintainelesehez minden instance fieldet transient kell dekl es egy readResolve() metodust nyujtani (item 89). egyebkent valahanyszor egy serialized instance deserialized, akkor uj instance krealodik
+private Object readResolve() { return INSTANCE; //returnoljuk a sole instanceot, a GC pedig fogl a tobbivel
+
+singleton impl harmadik modja a single-element enum
+public enum Elvis { INSTANCE;
+hasonlo a public field approachoz de tomorebb, serialization problemat is kezeli, es garanciat ad a tobbszoros instantiation ellen, meg serialization/refl tamadasokkal sem lehet. alt a legjobb mod a singleton implra. nem hasznalhato ha a singletonnak superclasst kell extendalnia, ha az nem az Enum (bar enum implhat ifaceket)

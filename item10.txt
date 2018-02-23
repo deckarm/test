@@ -1,0 +1,136 @@
+ITEM 10: OBEY THE GENERAL CONTRACT WHEN OVERRIDING EQUALS
+
+equals() overridolasa egyszerunek tunik de sokfelekeppen el lehet rontani. legegyszerubb elkerulni ha nem overridoljuk, ekkor a class minden instance csak onmagaval equal. ez akkor jo ha
+- minden class instance inherently unique: olyan classok mint Thread, amelyek active entityket es nem valuekat repr. az Object altal nyujtott equals() impl behavja ezekre tokeletes
+- classnak nem kell "logical equality" testet nyujtania. pl. java.util.regex.Pattern overridolhatta volna equals()-t h csekkelje h ket Pattern instance uazt a regexpet repr, de designerek ugy gondoltak h clienteknek nem fog kelleni ez a func. ilyenkor szinten jo az Object-tol orokolt equals() impl
+- egy superclassnak van overriden equals()-ja es az a behav megfelelo. pl. legtobb Set impl az AbstractSet, List implk az AbstractList, Map implk az AbstractMap equals() impljat oroklik
+- class private v package-private es biztosak vagyunk benne h az equals() metodusa sosem invokolodik. ha nagyon ovatosak lenni akkor overridolhatjuk h tevedesbol se invokolodjon: public boolean equals(Object o) { throw new AssertionError();
+
+equals()-t akkor kell overridolni ha a classra ertelmezett a "logical equality", ami mas mint az obj identity, es egy superclass meg nem overridolta az equals()-t. ez jell az un. value classokra; olyan classok amik egy valuet repr, pl. Integer v String. amikor refeket hasonlitunk valuekhoz az equals() segitsegevel akkor azt akarjuk tudni h logically equivalentek-e, nem azt h uarra az objra refelnek-e. equals() overridolasa ezen kivul lehetove teszi h az instanceok map keykent v set elementkent hasznalhatoak, predictable + kivanatos behavval
+
+value classok egy fajtaja ami nem kivanja meg az equals() overridolasat, az amely instance controlt (item 1) hasznal annak biztositasara h minden valueval max egy obj letezzen. enum typeok (item 34) ebbe a kategoriaba esnek. ezekre a classokra a logical equality uaz mint az obj identity, ezert az Object equals() metodusa logical equals() metoduskent mukodik
+
+ha overridoljuk equals()-t, akkor kovetnunk kell a general contractjat
+az equals() equivalence relationt impl
+- reflexiv: bmely non-null x ref valuera x.equals(x) true
+- symmetric: bmely non-null x es y ref valuekra x.equals(y) true csakkor ha y.equals(x) true
+- transitive: bmely non-null x,y es z ref valuekra ha x.equals(y) true es y.equals(z) true akkor x.equals(z) true
+- consistent: bmely non-null x es y ref valuekra x.equals(y) tobbszori invokolasa konzisztensen v truet v falseot kell returnoljon, felteve h az equals() ell soran hasznalt semmilyen info nem valtozott
+- bmely non-null x ref valuera x.equals(null) false
+
+ha ezt megsertjuk akkor a prg furcsan viselkedhet v crashelhet es nehez a hiba okat kideriteni. egy class sem onallo "sziget"; gyakran adunk at class instanceokat masoknak; sok class, pl. a coll classok azon dependalnak h a nekik atadott objk betartjak-e az equals() contractot
+
+equiv relation egy operator ami elemek egy setjet subsetekbe particionalja, aszerint h mely elemek equalek egymassal. subsetek neve equiv classok. ahhoz h egy equals() metodus hasznalhato legyen, egy equiv class osszes eleme interchangeable kell legyen
+- reflexivity: obj equal sajat magaval. ezt nehez nem szandekosan megserteni. ha megis megsertenenk es aztan hozzaadnank a classunk egy instanceat egy collhoz akkor a contains() metodus azt mondhatna h a coll nem tartalmazza az eppen hozzaadott instanceot
+
+===
+- symmetry: bmely ket objnak egyet kell ertenie abban h ok equalok. ezt konnyu szandekosan megserteni. pl. 
+public final Class CaseInsensitiveString {
+  private final String s;
+  public CaseInsensitiveString(String s) { this.s = Objects.requireNonNull(s);
+  public boolean equals(Object o) { 
+    if(o instanceof CaseInsensitiveString) return r.equalsIgnoreCase(((CaseInsensitiveString)o).s);
+    if(o instanceof String) return s.equalsIgnoreCase((String)o); //egyiranyu interoperability az ordinary stringekkel
+    return false;
+
+CaseInsensitiveStringcis = new CaseInsensitiveString("Polish"); String s = "polish";
+cis.equals(s) truet returnol. a problema h a CaseInsensitiveString equals() metodusa tud a normal stringekrol, a String equals() metodusa viszont nem tud a case-insensitive stringekrol. ezert s.equals(cis) falset returnol, ami symmetry violation
+List<CaseInsensitiveString> list = new ArrayList<>(); list.add(cis);
+nem tudjuk h a list.contains(s) mit fog returnolni. OpenJDK-ban falseot, de mas implnal lehet true v eppen runtime exc is. ha egyszer violaltuk az equals() contractot, nem tudjuk h mas objk h fognak viselkedni ha a mi classunkat hasznaljak
+megoldas ha egyszeruen eltavolitjuk az ordinary Stringekkel valo interoperability kiserletet
+return o instanceof CaseInsensitiveString && ((CaseInsensitiveString)o).s.equalsIgnoreCase(s);
+
+===
+- transitivity: ha egy obj equal egy masikkal, a masik pedig equal egy harmadikkal, akkor az elso equal a harmadikkal. ezt konnyu szandekosan megserteni. pl. subclass uj value componentet ad a superclassahoz, vagyis egy olyan infot ami befolyasolja az equals() mukodeset
+public class Point {
+  private final int x; private final int y; public Point(int x, int y) { this.x = x; this.y = y; }
+  public boolean equals(Object o) { if(!(o instanceof Point)) return false; Point p = (Point) o; return p.x == x && p.y == y;
+public class ColorPoint extends Point {
+  private final Color color; public ColorPoint(int x, int y, Color color) { super(x,y); this.color = color;
+
+ha nem adunk meg explicit equals() metodust akkor a Point-bol oroklodik es a color ignoralva lesz. ez nem violalja az equals() contractot, de nyilvan nem elfogadhato
+
+ha olyan equals()-t irunk ami csakkor true ha az argja egy azonos positionu es coloru Point
+public boolean equals(Object o) { if(!(o instanceof ColorPoint)) return false; return super.equals(o) && ((ColorPoint) o).color == color;
+violates symmetry. mas eredmenyt kapunk ha pointot hasonlitunk color pointtal es ha forditva. az elobbi ignoralja a colort, az utobbi pedig mindig falset returnol mert az arg type incorrect
+Point p = new Point(1,2); ColorPoint cp = new ColorPoint(1,2,Color.RED); => p.equals(cp) true, de cp.equals(p) false
+
+ezt megprobalhatjuk ugy javitani h ColorPoint.equals() ignoralja a colort, amikor "mixed" P vs CP osszehasonlitast csinal
+public boolean equals(Object o) { 
+  if(!(o instanceof Point)) return false; 
+  if(!(o instanceof ColorPoint)) return o.equals(this); //ha o egy normal Point, akkor hasonlitsunk a colort ignoralva
+  return super.equals(o) && ((ColorPoint)o).color == color; //ha o egy ColorPoint akkor full comparison
+  
+ez teljesiti symmetryt, de violalja transitivityt
+ColorPoint p1 = new ColorPoint(1,2,Color.RED); Point p2 = new Point(1,2); ColorPoint p3 = new ColorPoint(1,2,Color.BLUE); => p1.equals(p2) es p2.equals(p3) de p1.equals(p3) false. az elso ket osszehasonlitas ignoralja a colort, a harmadik viszont figyelembe veszi
+emellett ez az approach vegtelen recursiont is okozhat. ha lenne egy masik Point subclass egy uilyen jellegu equals() metodussal, akkor egy myColorPoint.equals(myOtherSubclassPoint) StackOverflowErrort dob
+
+ez az equiv relationok egy fundamental problemaja OO nyelvekben: nem lehet egy instantiable classt extendalni es value componentet hozzaadni ugy h megorizzuk az equals() contractot, csak ha feladjuk az OO abstraction benefitjeit
+
+ha instanceof helyett getClass()-al probalkozunk
+public boolean equals(Object o) { if(o == null || o.getClass() != getClass()) return false; Point p = (Point) o; return p.x == x && p.y == y;
+igy az objk csakkor equalok ha uaz az impl classuk. de egy Point subclassa szinten Point, es ugy is kellene viselkednie, de ha ezt az approachot kovetjuk akkor nem teszi
+private static final Set<Point> unitCircle = Set.of(new Point( 1,  0), new Point( 0,  1), new Point(-1,  0), new Point( 0, -1));
+public static boolean onUnitCircle(Point p) { return unitCircle.contains(p);
+
+ez eddig mukodik. most extendaljuk a Pointot vmi trivialis funcal ami nem value component hozzaadas, pl. constructor trackelje h hany instance krealodott
+public class CounterPoint extends Point {
+  private static final AtomicInteger counter = new AtomicInteger();
+  public CounterPoint(int x, int y) { super(x,y); counter.incrementAndGet();
+  public static int numberCreated() { return counter.get();
+LSP szerint egy type bmely propertyjenek a subtypejara is tartania kell, igy a typre irt bmely metodusnak a subtypejain is muk kell (azaz Point egy subclassa, pl. CounterPoint, szinten Point is ugy is kell viselkdenie). de ha a fenti onUnitCircle() metodusnak CounterPoint-ot adunk at; amennyiben a Point class egy getClass() alapu equals() metodust haszn, akkor az onUnitCircle() metodus falseot fog returnolni, a CounterPoint instance x es y koordjaitol fgtl. ez azert van, mert a legtobb coll, igy a HashSet is, az equals() metodust haszn a containment csekkelesere, es semmilyen CounterPoint instance nem equal egy Point-al. ha Point instanceof alapu equals() metodust haszn, akkor az onUnitCircle() metodus CounterPoint instancera is jol muk
+
+bar instantiable class value componenttel valo extendalasara nincs mod, item 18 jo workaround: favor composition over inheritance. ColorPoint extends Point helyett ColorPointnak legyen egy private Point fieldje es egy public view metodusa (item 6) ami egy uolyan positionu Pointot ad vissza
+public class ColorPoint {
+  private final Point point; private final Color color; public ColorPoint(int x, int y, Color color) { point = new Point(x,y); this.color = Objects.requireNonNull(color);
+  public Point asPoint() { return point; //a colorpoint point-viewjat adja vissza
+  public booolean equals(Object o) { if(!(o instanceof ColorPoint)) return false; ColorPoint cp = (ColorPoint) o; return cp.point.equals(point) && cp.color.equals(color);
+
+java platform libekben vannak classok amik instantiable classt extendalnak es value componentet adnak hozza. pl. java.sql.Timestamp extends java.util.Date es nanoseconds fieldet ad hozza. a TimeStamp equals() implja violalja a symmetryt es furcsa behavt okozhat ha TimeStamp es Date objkat haszn uabban a collban v mas modon keverjuk oket. Timestamp classban van is disclaimer ami felhivja erre a figyt. ilyet tehat ne csinaljunk
+
+_abstract_ class subclassahoz tudunk value componentet adni az equals() contract violalasa nelkul. ez fontos item 23-ban bemutatott class hiereknel: prefer class hierarchies to tagged classes. pl. lehet egy value componentek nelkuli abstract Shape class, egy Circle subclass ami egy radius fieldet ad hozza, es egy Rectangle subclass ami length es width fieldeket ad hozza. az elobb bemutatott problemak itt nem fordulnak elo mert nem tudunk direktben superclass instanceot krealni
+
+===
+- consistency: ha ket obj equal akkor mindig equalnak kell maradniuk, amig egyikuk v mindketto modif. maskent, mutable objk lehetnek kul idopontban kul objkkal equalok, de az immut objk nem. class irasakor gondoljuk meg h immut legyen-e (item 17). ha ugy dontunk h immut legyen akkor az equals() metodus enforcolja h az equal objk equalok, az unequal objk pedig unequalok maradjanak
+
+class akar immut akar nem, ne irjunk olyan equals()-t ami unreliable rscken dependal. ha ezt megszegjuk akkor nehez a consistencyt megtartani. pl. java.net.URL equals() metodusa a kapcsolodo hostok IP-jenek osszevetesen alapul. hostname IP-ve forditasa NW accesst igenyelhet es nem garantalt h mindig uaz lesz az eredmeny. igy az URL equals() metodusa violalhatja a contractot es gyak problemakat okozhat. URL equals() metodusa rossz concept, ne masoljuk; sajnos bw compat miatt nem lehet megvalt. az ilyen jell problemak elkerulesere az equals()-nak csak mem resident objkon szabad determinisztikus muveleteket vegeznie
+
+===
+- non-nullity: minden obj unequal to null. nehez elkepzelni h o.equals(null)-ra veletlenul truet returnoljunk, de dobhatunk veletlenul NPE-t. a contract ezt prohibiteli. szamos class equals()-aban explicit null csekk van
+public boolean equals(Object o) { if(o == null) return false; ...
+
+ez nem szukseges. equality csekkelesehez az equals()-nak eloszor castolnia kell az argjat a megfelelo typeba h az accessorai invokolhatoak, a fieldjei pedig accessalhatoak legyenek. a casting elott instanceof-al kell csekkelni h az arg type megfelelo-e
+public boolean equals(Object o) { if(!(o instanceof MyType)) return false; MyType mt = (MyType) o; 
+ha ez a type csekk nem lenne es az equas() egy nem megfelelo typeu argot kapna akkor az equals() ClassCasTexceptiont dobna, ami violalja az equals() contractot. de az instanceof spec szerint falset returnol ha az elso operandusa null, ezert nem szukseges explicit null csekk
+
+===
+eddigieket ofoglalva egy jo minosegu equals() receptje
+1. haszn == opert annak csekkelesere h az arg erre az objra ref-e. ha igen, akkor return true. ez perf optimizalas, megeri ha a komparalas draga
+2. haszn instanceof opert annak csekkelesere h az arg type megfelelo-e. ha nem akkor return false. tip a correct type az amely classban a metodus van. neha vmi iface amit a class impl. hasznaljunk ifacet ha a class olyan ifacet implt ami refinolja az equals contractot annak erdekeben h lehetove tegye az ifacet impl classok kozti osszehasonlitast. coll ifacek pl. Set, List, Map, Map.Entry rendelkeznek ezzel a tulajdonsaggal
+3. castoljuk az argot a megfelelo typera. mivel a castot megelozi egy intsnaceof csekk, ezert garantaltan sikerul
+4. minden "significant" class fieldre csekkeljuk h az arg ezen fieldje matcheli-e az obj megfelelo fieldjet. ha ezek a csekkek mind sikerulnek akkor return true egyebkent return false. ha a 2. lepesben levo type egy iface, akkor az arg fieldjeit iface metodusokkal kell accessalnunk; ha a type egy class akkor accessibilityjuktol fuggoen esetleg direktben is accessalhatjuk oket
+
+primitiv tipusokra (nem float es double) hasznaljuk == osszehasonlitasra; obj refekre haszn equals() metodust rekurzivan; float fieldekre Float.compare(); double fieldekre Double.compare(). float es double spec kezelese a Float.Nan, -0.0f es double megfeleloik miatt szukseges. ha float/double fieldeket Float.equals()/ Double.equals() metodusokkal csekkelnenk az minden osszehasonlitasnal autoboxingot csinalna, perf--. array fieldeknel minden elemre haszn ezeket az elveket. ha egy array fieldben minden elevent relevans, akkor hasznaljuk az Array.equals() metodusok vmelyiket
+
+egyes obj ref fieldekben legitim lehet null. NPE-t elkerulendo az ilyen fieldeket az Objects.equals() metodussal csekkelhetjuk
+
+egyes classoknal mint pl. fenti CaseInsensitiveString, field osszehasonlitasok nem szimpla equality csekkek. ekkor letarolhatjuk a field egyszeru canonical formjat, es az equals() ezeket hasznalhatja egy dragabb nonstandard osszehasonlitas helyett. ez foleg immut objkra jo techn (item 17); ha az obj valtozhat akkor a canonical formot up-to-date kell tartanunk
+
+equals() perfje fugghet a fieldek komparalasanak orderetol. legjobb perfhez azokat a fieldeket erdemes elobb komparalni amelyek valoszinubb h kulonboznek v kevesbe draga a komparalasuk v mindketto. ne komparaljunk fieldeket amelyek nem reszei az obj logical statejenek, mint pl. sync lock fieldek. nem szukseges a "significant" fieldekbol kiszamolhato derived fieldeket kulon komparalnunk, de ez javithatja az equals() perft. ha egy derived field az egesz obj allapotat osszefoglalja akkor ezt az egy fieldet eleg lehet komparalni. pl. egy Polygon class tartja a sajat areajat; ha ket polygon areaja unequal akkor nem szukseges kulon komparalni az eleket es csucsokat
+
+ha befejeztuk az equals() metodus megirasat, csekkeljuk h symmetric, transitive, consistent. ezekre irjunk unit testeket, hacsak nem AutoValueval generaltuk az equals()-t. reflexivity es non-nullity alt mukodik
+(pelda equals() metodus PhoneNumber classra)
+
+- mindig overridoljuk hashCode()-ot ha overridoltuk equals()-t (item 11)
+- ne akarjunk tul okosak leni. ha csak a fieldek equalityjet csekkeljuk, akkor nem nehez az equals() contractot betartani. ha tulsagosan agresszivan vizsgaljuk az equalityt abbol gond lehet. pl. aliasingot figyelembe venni alt rossz otlet. pl. a File class (helyesen) nem vizsgalja h az uarra a filera refelo sym linkek equalok-e
+- ne csereljuk ki az Object typeot az equals() argjaban. public boolean equals(MyClass o) nem overridolja Object.equals()-t hanem overloadolja (item 52). meg pluszban se krealjunk ilyen "strongly typed" equals() metodust a normal melle, mert ezzel a subclassokban levo @Override annotationok false positiveokat jelezhetnek
+az @Override annotation konzisztens hasznalata segit megakadalyozni ezt (item 40). @Override public boolean equals(MyClass o) nem fog lefordulni
+
+equals() es hashCode() metodusok irasa es tesztelese hosszadalmas. alternative a Google open source AutoValue fwje, ami autom megkrealja oket. legtobb esetben a generalt metodusok uazok amiket kezzel irnank
+IDEk is nyujtanak equals() es hashCode() generalo toolokat de az eredmeny alt verbose es kevesbe olvashato mint az AutoValue, nem trackelik autom a class valtozasait es ezert tesztek kellenek. ezzel egyutt az IDE generalas meg mindig preferalt a kezzel valo impl szemben, mert az IDEk nem hibaznak
+
+summary: ne overridoljuk az equals()-t ha nem szukseges: sok esetben az Object-bol orokolt impl pont azt csinalja ami nekunk kell. ha overridoljuk akkor omparaljuk a class minden significant fieldjet oly modon, h az equals() contract mind az ot eloirasa teljesuljon
+
+
+
+

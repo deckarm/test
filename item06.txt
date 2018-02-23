@@ -1,0 +1,37 @@
+ITEM 6: AVOID CREATING UNNECESSARY OBJECTS
+
+gyakran megfelelo egy single objt reusolni, es nem krealni egy uj func ekviv objt minden alkalommal. reuse gyorsabb es szebb is lehet. immut obj mindig reusolhato (item 17)
+
+String s = new String("valami"); 
+ezt ne csinaljuk. ez minden execelesnel egy uj String instancet kreal es egyik krealas sem szukseges. a String konstr argja ("valami") maga is egy String instance, es func identical minden obj-al amit a konstr kreal. ha ez a stmt egy loopban v gyakran invokolt metodusban van akkor millioszam krealhatunk folosleges String instanceokat
+
+String s = "valami";
+ez a javitott verzio. single String instanceot haszn, es nem kreal ujat minden execelesnel. emellett garantalt h ez az obj lesz reusolva minden olyan, ezt a string literalt tart kod altal ami uebben a VM-ben fut
+
+feleseleges obj krealas gyakran elkerulheto ha immut class static factory metodusat (item 1) haszn konstr helyett. pl. Boolean.valueOf(String) preferalt Boolean(String) helyett ami Java 9-tol deprecated is. konstrnak minden alkalommal uj objt KELL krealnia, a factorynak nem es nem is fog. mutable objk szinten reusolhatoak ha tudjuk h nem lesznek modifolva
+
+ha egy draga objra van ismetelten szuksegunk akkor celszeru lehet reusera becachelni. sajnos nem mindig egyertelmu h mikor krealunk ilyen objt. pl. romai szamot validalo metodus regexppel
+static boolean isRomanNumeral(String s) { return s.matches(...);
+String.matches a legegyszerubb mod annak csekkelesere h egy string matchel egy regecpre, perf crit helyeken ismetelt hasznalata nem ajanlott. internally egy Pattern instanceot kreal a regexphez es csak egyszer haszn, ezutan GC-eligible lesz. Pattern instance krealas draga mert finite state machineba compilolja a regexpet
+
+perf++ erdekeben expl compiloljuk a regexpet Pattern instencaba (ami immut) a class init reszekent, cacheljuk be, es reusoljuk uazt az instanceot az isRomanNumeral() metodus minden invocationjanal
+public class RomanNumerals {
+  private static final Pattern ROMAN = Pattern.compile(...);
+  static boolean isRomanNumeral(String s) { return ROMAN.matcher(s).matches();
+szerzo gepen ez 6.5x gyorsulas az elso verziohoz kepest. emellett clarity++. az egyebkent invisible Pattern instance egy static final field, aminek neve van, es jobban olvashato mint maga a regexp
+
+ha a javitott metodust tart class inited, de magat a metodust sosem invokoljuk, akkor a ROMAN field szuksegtelenul lesz initelve. lehetseges lazily initelni a fieldet (item 83) az elso alkalommal amikor a metodus invokolodik, de ez nem ajanlott. lazy init gyakran komplikalja az implt tenyleges perf++ nelkul (item 67)
+
+ha egy obj immut, akkor nyilvanvalo h safely reusolhato, de bizonyos esetekben nem nyilvanvalo, sot counterinitiative. pl. GOF adapterek mas neven viewk. adapter egy obj ami egy backing objnak delegal, egy alternativ ifacet nyujtva. mivel az adapternek nincs stateje a backing obj statejen tul, ezert nem kell egy adapterbol egy instancenal tobbet krealni egy adott objhoz
+
+pl. Map iface keySet() metodusa egy Set viewt returnol a Map objra, ami a mapban levo keyeket tart. ugy tunhet h minden keySet() hivas egy uj Set instanceot kreal, de valojaban uazt a Set instanceot returnolheti. bar a returnolt Set instance tip mutable, a returnolt objk func identicalok: ha egy returnolt obj megvalt, akkor a tobbi is, mert uaz a Map instance backeli oket. a keySet view objbol tobb instanceot krealni nem karos, de szuksegtelen es nincs benefitje
+
+autoboxing is folosleges objkat tud krealni. homalyositja de nem szunteti meg a primitiv es boxed primitiv typeok kozti kult; subtle semantics es jelentosebb perf kulonbsegek (item 61). pl. metodus ami a poz intek osszeget szamolja. az eredmenyt longban kell tarolni mert az int nem eleg nagy
+private static long sum() { Long sum = 0L; for(long i = 0; i <= Integer.MAX_VALUE; i++) sum+=i; return sum;
+az eredmeny helyes de sokkal lassabb mint kellene, egy typo miatt. a sum vart Long-kent def long helyett, emiatt ~2^31 db folosleges Long instance krealodik. preferaljuk a primitiveket a boxed primitivekkel szemben es figyeljunk a nem szandekolt autoboxingra
+
+ezt az itemet ne ugy ertsuk h az obj krealas draga es kerulendo. epp forditva, kis objk, amelyek konstr keves explicit workot vegez, krealasa es reclaimelese olcso, modern JVM implkon foleg. clarity,simpl,prg power++ erdekeben torteno obj krealas jo dolog
+
+obj krealas elkerulese erdekeben sajat obj pool maintainelese nem jo otlet, hacsak nem nagyon heavyweight objkrol van szo. classic pl. ahol obj pool justified a DB conn; conn establish ktge eleg magas ahhoz h reusenak legyen ertelme. sajat obj pool maintainelese viszont cluttereli a kodot, mem footprint++ es perf--. modern JVM implkban jol optim GC ami lightweight objkon sokkal jobb perf mint sajat obj pool
+
+defensive copykrol szolo item 50 ennek az ellenpontja. ez az item azt mondja h "ne krealjunk uj objt amikor egy existinget reusolhatunk", item 50 azt mondja h "ne reusoljunk egy exisiting objt amikor ujat kell krealnunk". ha defensive copyingra van szukseg es ugy reusolounk egy objt, annak a penaltyja sokkal nagyobb mint foloslegesen dupl objt krealni. def copyk elmulasztasa komoly bugokhoz es sec holeokhoz vezethet; folosleges obj krealas csak style es perf--

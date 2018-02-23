@@ -1,0 +1,43 @@
+ITEM 1: CONSIDER STATIC FACTORY METHODS INSTEAD OF CONSTRUCTORS
+
+public constr a hagyomanyos mod ahogy egy class lehetove teszi a clientjei szamara egy instance megszerzeset. masik mod a public static factory metodus, ami a class egy instanceat adja vissza
+public static Boolean valueOf(boolean b) { return b ? Boolean.TRUE : Boolean.FALSE; } 
+
+nem uaz mint a factory method GOF pattern!
+class nyujthat static factory metodust a klienseinek public constr mellett v helyett is
+
+elonyok
+konstr ellentetben van neve. ha konstr parameterei nem irjak le jol a returnolendo objectet, akkor egy jol megvalasztott nevu static factory metodus  egyszerubben olvashato client kodot tesz lehetove. pl. BigInteger(int, int, Random) egy olyan BigIntegert ad vissza ami valszeg prim, helyette BigInteger.probablePrime() jobb
+classban csak egy konstr lehet adott signatureal. prgozok gyakran megkerulik: ket konstr amelyek csak "in the order of their parameter types" kulonboznek. ez nem jo otlet, pl. clientek tevedesbol a rosszat hivhatjak. megoldhato kulonbozo nevu static factory metodusokkal
+
+konstr ellentetben nem kell minden invokolaskor uj objt krealniuk. ez lehetove teszi h immut classok (item 17) preconstructed instanceokat hasznaljanak, v becacheljek a megkrealt instancet, es kesobb uazt adjak vissza elkerulve a dupl obj krealast. Boolean.valueOf(boolean) ezt a technt haszn: soha nem kreal objt. hasonlo a flyweight GOF patternhez. jelentos perf++ lehet ha gyakran van szukseg ekv objkra, foleg ha draga megkrealni oket
+az h a static factory metodus uazt az objt tudja returnolni kul invocationokbol, lehetove tesi h classok controllaljak az existing instanceaikat: un. instance-controlled classok. class igy garantalhatja h singleton (item 3) v noninstantiable (item 4). immut value class (item 17) igy garantalhatja h nem letezik ket equal instance: a.equals(b) csakkor ha a == b. ez a flyweight pattern alapja. pl. enum typeok (item 34) ezt a garanciat nyujtjak
+
+konstr ellentetben subtype objt is returnolhet. flex lehet megval a returned obj classat
+igy az API anelkul tud objkat returnolni h a classukat publicka tenne. impl classok ilyen modon valo elhidolasa compact APIt eredmenyez. ezt haszn az iface-based fwk (item 20) ahol az ifacek a static factory metodusok natural return typejai
+Java 8 elott ifaceben nem lehetett static metodus. konv szerint Type iface static factory metodusai egy Types nevu noninstantiable companion classba (item 4) kerultek. pl. a Java coll fw 45 db util implt nyujt az ifaceihez, pl. unmodif collk, sync collok stb. ezek majd mindegyike egy noninst class (java.util.Collections) static factory metodusaival van exportalva. a returnolt objk classai nonpublicok
+coll fw API igy sokkal kisebb mintha 45 separate public classt exportalna, minden convenience implhoz egyet. ezzel nem csak az API bulkja hanem a conceptual weightje is csokk (conceptek amiket a prgozonak el kell sajatitania az API hasznalatahoz). prgozo tudja h a returnolt class APIjat az iface pontosan spec, es nem kell tudnia semmit az impl classrol. ezenkivul igy a client a returnolt objt az ifacevel refelheti, nem az impl classal, mi jo practice (item 64)
+Java 8-tol lehetnek ifaceben static classok, ezert alt mar nem kell companion class. az ebben levo public static memberek most mar berakhatok magaba az ifacebe. de a static metodusok mogott levo impl kod bulkjat tovabbra is egy separate package-private classba kellhet rakni. ez azert van mert Java 8-ban egy iface minden static membere public kell legyen. Java 9 mar engedi a private static metodusokat, de a static fieldek es static member classok tovabbra is public kell legyenek
+
+returnolt obj classa hivasonkent mas lehet az input paramok fvben. a declared return type bmely subtypeja lehetseges. a returnolt obj classa releaserol releasere is valtozhat
+EnumSet classnak (item 36) nincs public konstruktora, csak static factoryjai. OpenJDK implban ket subclass vmelyikenek instanceat returnolik, az underlying enum type sizetol fuggoen: ha max 64 eleme van, akkor RegularEnumSet amit egy single long backel; ha min 65 eleme akkor JumboEnumSet amit egy long array backel
+clientek nem latjak a ket impl classt. ha RegularEnumSet mar nem jelentene perf++ kis enum typeoknal, akkor mellekhatasok nelkul el lehetne a kesobbi releasekbol tav. clientek nem fogl a factorytol kapott obj classaval; csak az erdekli oket h az EnumSet vmilyen subclassa
+
+returnolt obj classanak nem kell leteznie amikor a metodust tart classt irjuk. az ilyen flex static factory metodusok kepezik a service provider fwk alapjat, pl. JDBC API. ez olyan sys ahol a providerek egy servicet impl, es a sys elerhetove teszi az implkat a clientek szamara, decouplolva a clienteket az implktol
+service provider fw harom komp: service iface ami egy implt repr; provider registration API amivel a providerek registraljak az implkat; service access API amivel a clientek obtainelik a service instanceait. service access nyujthat criteriat amivel a clientek implt valaszthatnak. criteria nelkul az API egy default impl instanceot returnol v hagyja h a client vegigmenjen minden letezo impln. service access API a flex static factory ami a service provider fw alapjat kepezi
+opcionalis negyedik komp: service provider iface ami leir egy factory objt ami a service iface instaceait gyartja. ennek hianyaban az implkat reflective kell instantialni (item 65). JDBC-nel a Connection a service iface, DriverManager.registerDriver() a provider registration API, DriverManager.getConnection() a service access API, Driver a service provider iface
+service provider fw patternnek tobb valtozata. pl. a service access egy richer service ifacet returnolhet a clienteknek "than the one furnished by providers". ez a GOF bridge pattern. DI fwk (item 5) powerful service providernek tekinthetoek. Java 6 ota van general-purpose service provider fw: java.util.ServiceLoader ezert nem kell sajatot irni (item 59). JDBC nem hasznalja a ServiceLoadert mert predatelni
+
+ha csak static factory metodusokat providolunk, akkor a class public/protected constr hijan nem subclassolhato. pl. a coll fw conven impl classait nem lehet subclassolni. ez akar elony is lehet mivel composition over inheritancere osztonoz (item 18) vmi requirement az immut typeokhoz (item 17)
+
+masik hatrany, h nehez lehet megtalalni oket. nem tunnek ki ugy API docbol mint konstrk. lehetseges naming conventionok
+- from: type-conversion metodus, egy param, es a type egy instanceat returnoli: Date d = Date.from(instant);
+- of: aggregation metodus, tobb param, es a type egy instanceat returnoli ami incorporalja oket: Set<Rank> faceCards = EnumSet.of(JACK, QUEEN, KING);
+- valueOf: from/of verboseabb alternativaja. BigInteger prime = BigInteger.valueOf(Integer.MAX_VALUE);
+- instance/getInstance: paramjai (ha vannak) altal leirt instanceot returnol, de nem lehet tudni h uaz-e a value: StackWalker luke = StackWalker.getInstance(options);
+- create/newInstance: mint az instance/getInstance de garantalja h minden hivas uj instanceot ad vissza. Object newArray = Array.newInstance(classObject, arrayLen);
+- getType: mint a getInstance, de akkor haszn ha a factory metodus mas classban van. Type a returnolt obj typeja. FileStore fs = Files.getFileStore(path);
+- newType: mint a newInstance, de akkor haszn ha a factory metodus mas classban van. Type a returnolt obj typeja. BufferedReader br = Files.newBufferedReader(path);
+- type: getType es new Type tomorebb alternativaja. List<Complaint> litany = Collections.list(legacyLitany);
+
+static factory metodusoknak es public konstruktoroknak is megvan a haszna. static factoryk gyakran jobbak, ezert ne reflexbol public konstrt csinaljunk
