@@ -1,0 +1,19 @@
+ITEM 22: USE INTERFACES ONLY TO DEFINE TYPES
+
+ha egy class egy ifacet impl, az iface typekent szolgal, amellyel a class instanceai refelhetoek. tehat az h egy class impl egy ifacet, az vmit kell mondjon arrol h egy client mit tehet a class instanceaival. nem helyes mas celra ifacet def
+
+ifacek egy fajtaja ami ezt nem telj az un constant iface. ebben nincsenek metodusok, csak static final fieldek, mindegyik egy constantot exportol. a konstansokat haszn classok impljak az ifacet h ne kelljen class nevvel qualifyolniuk a constant neveket
+public interface PhysicalConstants {  static final double AVOGADROS_NUMBER = 6.022_140_857e23; //stb. tovabbi konstansok. antipattern!
+
+constant iface pattern az ifacek rossz hasznalata. az h a class internally vmi constantokat haszn, az egy impl detail. ha constant ifacet implunk, azzal ezt az impl detailt beleleakeljuk a class exported APIjaba. userekre nezve nincs eredmenye h a class egy constant ifacet impl; csak osszezavarja oket. ami meg rosszabb, ez egy commitment: ha egy kesobbi releaseben a classt ugy modifoljak h mar nem kell a constantokat haszn, az ifacet tovabbra is impl kell h bizt a binary compatibilityt. ha egy nonfinal class egy constant ifacet impl, akkor minden subclassanak a namespace is pollutalva lesz az iface constantokkal
+
+Java platform libekben vannak constant ifacek, pl. java.io.ObjectStreamConstants. ezek anomaliak, nem kovetendo peldak
+
+ha constantokat akarunk exportolni annak tobb jo modja is van. ha a constantok erosen kotve vannak egy existing classhoz v ifacehez akkor hozzaadhatjuk ahhoz. pl. boxed numerical primitive classok, Integer, Double, exportolnak MIN_VALUE es MAX_VALUE constantokat. ha a constantok egy enumerated type memberjeinek tekinthetoek, akkor exportolhatjuk oket egy enum typeal (item 34). egyebkent exportolhatjuk oket egy noninstantiable util classal (item 4)
+public class PhysicalConstants { private PhysicalConstants() {} public static final double AVOGADROS_NUMBER = ...; 
+
+vegyuk eszre a _ char hasznalatat a numeric literalokban. ezek Java 7 ota validok, nincs hatasuk a numeric literalok valuejara, de konnyebben olvashatoak. fontoljuk meg a hasznalatukat ha a (fixed v floating point) numeric literal 5 v tobb digitet tart. 10-es szamrendszeru literaloknal 3 digitenkent erdemes _ hasznalni, az 1000 poz v neg hatvanyait jelezve
+
+normal esetben a clientnek qualifyolnia kell a constant nevet a class nevevel, pl. PhysicalConstants.AVOGADROS_NUMBER. ha surun hasznaljuk a util class altal exportolt constantokat akkor haszn static importot
+
+summary: ifaceket csak type defre hasznaljunk, constant exportalasra ne
