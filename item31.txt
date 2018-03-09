@@ -1,0 +1,75 @@
+ITEM 31: USE BOUNDED WILDCARDS TO INCREASE API FLEXIBILITY
+
+item 28-ban irtak szerint parametrized typeok invariantok. maskent, bmely ket distinct Type1 es Type2 eseten List<Type1> sem nem subtypeja sem nem supertypeja List<Type2>-nak. bar counterinitiativenak tunhet h List<String> nem subtypeja List<Object>-nek, valojaban van ertelme. List<Object>-be bmilyen objt tehetunk, de List<String>-be csak stringeket. tehat mivel egy List<String> nem tud mindent megtenni amit egy List<Object>, ezert nem subtype (ld. LSP, item 10)
+
+neha nagyobb flex szuks mint amit az invariant typing nyujt. pl. item 29 Stack class, tfh egy olyan metodust akarunk hozzaadni ami elemek egy seqjet kapja, es mindet rapusholja a stackre
+public void pushAll(Iterable<E> src) { for(E e: src) push(e);
+
+ez tisztan lefordul, de nem teljesen jo. ha az Iterable element typeja pontosan megegyezik a stackeval, akkor jol muk. tfh Stack<Number> van es push(intVal)-t invokolunk, ahol az intVal typeja Integer. ez muk, mert Integer a Number subtypeja. ebbol kov ugy tunik h ennek is muk kellene
+Stack<Number> numberStack = new Stack<>(); Iterable<Integer> integers = ...; numberStack.pushAll(integers);
+de ez valojaban error, mert a parametrized typeok invariantok. "error: incompatible types: Iterable<Integer> cannot be converted to Iterable<Number>: numberStack.pushAll(integers);"
+
+szerencsere van mo; a nyelv erre az esetre nyujt egy spec parametrized typeot, az un bounded wildcard typeot. a pushAll() input paramjanak typeja nem "Iterable of E" hanem "Iterable of some subtype of E" kell legyen, es van egy wildcard type ami pontosan ezt jelenti: Iterable<? extends E> (az extends keyword hasznalata kicsit misleading: emlekezzunk item 29-bol h a subtype def szerint minden type subtypeja sajat maganak, bar nem extandalja sajat magat)
+public void pushAll(Iterable<? extends E> src) { for(E e: src) push(e);
+igy mar nem csak maga a Stack fordul le tisztan, de a client kod is, ami az eredeti pushAll() dekl mellett nem fordulna. mivel a Stack es a clientjei is lefordul, ezert tudjuk h minden typesafe
+
+tfh egy popAll() metodust is akarunk irni, ami kipopolja az osszes elemet a stackbol es hozzaadja oket a megadott collhoz
+public void popAll(Collection<E> dst) { while(!isEmpty()) dst.add(pop());
+
+ez megint csak tisztan lefordul, es jol muk ha a dest coll typeja pontosan uaz mint a stacke. de ez meg nem eleg. tfh Stack<Number> es van egy Object typeu var. ha kipopolunk egy elemet a stackbol es eltaroljuk a varba, akkor az lefordul es lefut error nelkul. tehat azt gondolnank h ez is muk
+Stack<Number> numberStack = new Stack<y(); Collection<Object> objects = ...; numberStack.popAll(objects);
+de ez valojaban error, uolyan mint amit a pushAll() elso verziojanal kaptunk. Collection<Object> nem supertypeja a Collection<Number>-nek
+
+megint a wildcard typeok jelentik a mot. a popAll() input paramjanak typeja nem "collection of E" hanem "collection of some supertype of E" (supertype def szerint minden type supertypeja sajat maganak). itt is van egy wildcard type ami pontosan ezt jelenti: Collection<? super E>
+public void popAll(Collection<? super E> dst) { while(!isEmpty()) dst.add(pop());
+ezzel a modositassal a Stack es a client is tisztan lefordul
+
+tehat a max flex erdekeben haszn wildcard typeokat az olyan input paramokon amelyek producereket v cosnumereket repr. ha egy input param egyszerre P+C akkor a wildcard typeoknak nincs haszna: exact type match kell, amit wildcardok nelkul erhetunk el
+
+PECS: producer extends, consumer super
+maskent, ha egy parametrized type egy T producert repr, akkor haszn <? extends T>; ha egy T consumert repr akkor haszn <? super T>. a Stack peldaban pushAll() src paramja E instanceokat producol a stack szamara, tehat a megfelelo type Iterable<? extends E>. popAll() dst paramja E instanceokat consumol a stackbol, tehat a megfelelo type Collection<? super E>. PECS mnemonic megfogalmazza a fundamental principlet a wildcard typeok hasznalatahoz (maskent Get and Put Principle)
+
+ezt ismerve nezzunk meg nehany korabbi metodus es konstr deklt
+public Chooser(Collection<T> choices) //item 28
+ez a konstr arra haszn a choices collt h T typeu valuekat producoljon (es eltarolja oket kesobbi hasznra), tehat a deklja egy olyan wildcard typeot kell haszn ami extends T
+public Chooser(Collection<? extends T> choices)
+ez gyak azt jelenti h ha van egy List<Integer> es at akarnank adni egy Chooser<Number>-nek, az eredeti dekl mellett nem fordulna le, de a bounded wildcard type-al igen
+
+public static <E> Set<E> union(Set<E> s1, Set<E> s2) //item 30
+mindket param, s1 es s2 is E producer, tehat a dekl a kov kell legyen
+public static <E> Set<E> union(Set<? extends E> s1, Set<? extends E> s2)
+vegyuk eszre h a return type tovabbra is Set<E>. return typera ne haszn bounded wildcard typeokat. ez nem nyujt tovabbi flexet a usereknek, hanem arra kenyszeriti oket h wildcard typeokat haszn a client kodban. a javitott dekl mellett az alabbi tisztan lefordul
+Set<Integer> integers = Set.of(...); Set<Double> doubles = Set.of(...); Set<Number> = union(integers, doubles);
+
+megfelelo haszn mellett a wildcard typeok szinte invisiblek a class userei szamara. hatasuk h a metodusok elfogadjak azokat a paramokat amelyeket el kell fogadniuk es rejectaljak azokat amelyeket rejectalniuk kell. amennyiben egy class usereinek wildcard typeokon kell gondolkodnia akkor valszeg vmi gond van az APIval
+
+Java 8 elott a type inference ruleok nem voltak eleg okosak h kezeljek az elozo kodot, "which requires the compiler to use the contextually specified return type (or target type) to infer the type of E". a union() invocation target typeja itt Set<Number>. ha ezt a kodot egy korabbi Java verzioval probalnank leforditani (Set.of() helyett vmi massal) akkor egy hosszu, zavaros errort kapnank
+
+szerencsere erre is van mo; ha a compiler nem infereli a megfelelo typeot akkor egy un explicit type argument segitsegevel meg tudjuk mondani h milyen typeot hasznaljon. ezt nem haszn tul gyakran, mert nem tul szep, de ennek segitsegevel le lehet forditani Java 8 elotti verziokkal is
+Set<Number> numbers = Union.<Number>union(integers, doubles); //Union a class neve, ez nem szerepelt item 30-ban
+
+public static <T extends Comparable<T>> T max(List<T> list) //item 30
+javitott verzio wildcard typeokkal
+public static <T extends Comparable<? super T>> T max(List<? extends T> list)
+itt ketszer alk a PECS heuristicset. a list param T instanceokat producol tehat List<? extends T>-nek kell lennie. a trukkosebb a T type param esete. ez az elso alkalom h wildcardot alk type paramon. T spec szerint Comparable<T>-t extendalja, de egy "comparable of T" az T instanceokat consumol (es inteket producol a komparalas kimenetekent). ezert a Comparable<T> parametrized type helyett a Comparable<? super T> bounded wildcard typeot haszn. a comparablek mindig consumerek, ezert alt mondhato h Comparable<T> helyett jobb Comparable<? super T>. uez von comparatorokra is; ezert Comparator<T> helyett jobb Comparator<? super T>
+
+ez a revised max() dekl valszeg a legkomplexebb dekl a konyvben. nyertunk vmit ezzel a komplexitassal? igen, pl. az alabbi listet az orig dekl mellett nem tudjuk haszn, de a revised dekl mellett igen: List<ScheduledFuture<?>> scheduledFutures = ...;
+az orig metodus dekl mellett azert nem lenne jo, mert ScheduledFuture nem impl Comparable<ScheduledFuture>-t. o a Delayed iface subinterface-e, amely Comparable<Delayed>-et extendalja. maskent, ScheduledFuture instanceok nem csupan mas ScheduledFuture instaceokkal komparalhatok; hanem bmely Delayed instanceal, es ez emiatt az orig dekl rejectalja. altalanosabban a wildcardnak tam kell az olyan typeokat amelyek nem impl Comparablet (v Comparatort) direktben, de extandalnak egy olyan typet ami igen
+
+meg egy wildcard-related topic amit erdemes megemliteni. type paramok es wildcardok kozt duality van, es szamos metodus dekl ugy h egyiket v masikat haszn. pl. ket lehetseges egy static metodusra ami egy list ket indexed itemjet swappolja. az elso unbounded type paramot (item 30) haszn, a masik unbounded wildcardot
+public static <E> void swap(List<E> list, int i, int j);
+public static void swap(List<?> list, int i, int j);
+ketto kozul melyik a pref es miert? public APIban a masodik jobb mert egyszerubb. beadhatunk bmilyen listet, es a metodus swappolja az indexed elemeket. nincs type param ami miatt agodni kellene. szabaly: ha egy type param csak egyszer fordul elo egy metodus deklban akkor csereljuk ki wildcardra. ha ez egy unbounded type param, akkor csereljuk unbounded wildcardra; ha bounded type param akkor csereljuk bounded wildcardra
+
+a masodik dekl problemaja, h a straightfwd impl nem fordul le, zavaros error msg
+public static void swap(List<?> list, int i, int j) { list.set(i, list.set(j, list.get(i)));
+
+a problema h list typeja List<?>, amibe kizarolag null valuet lehet berakni. szerencsere van mod a metodus implra anelkul h unsafe castot v raw typet kellene haszn. irjunk egy private helper metodust ami capturolja a wildcard typeot
+public static void swap(List<?> list, int i, int j) { swapHelper(list, i, j);
+private static <E> void swapHelper(List<E> list, int i, int j) { list.set(i, list.set(j, list.get(i)));
+
+swapHelper() metodus tudja h a list egy List<E>. tehat tudja h a listbol kigettelt bmely value typeja E, es h a listaba safe betenni bmilyen E typeu valuet. ez a kicsit korulmenyes swap() impl tisztan lefordul. igy exportalhatjuk a jol kinezo wildcard-based deklt, internally pedig haszn a komplexebb generic metodust. a swap() metodus clientjeinek nem kell szembesulniuk a komplexebb swapHelper() deklal, de profitalhatnak belole. vegyuk eszre h a helper metodus signatureja pont az amirol fentebb azt irtuk h public APIba tul komplex
+
+summary: wildcard typeok hasznalata APIban trukkosebb, de API flexebb lesz. ha szeles korben haszn libet szeretnenk irni akkor fontos h megfelelo formaban hasznaljuk a wildcard typeokat. emlekezzunk a PECS alapszabalyra, es h minden comparable es comparator consumer
+
+

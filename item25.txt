@@ -1,0 +1,25 @@
+ITEM 25: LIMIT SOURCE FILES TO A SINGLE TOP-LEVEL CLASS
+
+bar a Java compiler lehetove teszi h egy source fileban tobb top-level classt def, ennek nincsenek benefitjei. van ellenben risk, mert tobb top-level class def egy source fileban lehetove teszi h egy classra tobb def legyen. h melyik def lesz haszn az attol fugg h milyen sorrendben lesznek a source fileok atadva a compilernek
+
+public class Main { main() { sout(Utensil.NAME + Dessert.NAME); //ket masik top-level classra refel
+a Utensil es Dessert classok uabban a Utensil.java nevu source fileban vannak def
+class Utensil { static final String NAME = "pan";
+class Dessert { static final String NAME = "cake";
+a kimenet igy "pancake"
+
+tfh veletlenul krealunk egy masik, Dessert.java nevu source filet ami uezt a ket classt def
+class Utensil { static final String NAME = "pot";
+class Dessert { static final String NAME = "pie";
+
+ha szerencsenk van es "javac Main.java Dessert.java" formaban compiloljuk le a prgt akkor compile error, es a compiler jelzi h tobbszer def a Utensil es a Dessert classokat. ez azert tortenik mert a compiler eloszor a Mian.java-t compilolja, es amikor meglatja a reft a Utensilre (ami megelozi a refet a Dessertre) akkor a Utensil.java fileban fogja keresni ezt a classt es megtalalja mind az Utensilt mind a Dessertet. es mive a command lineon megadtuk a Dessert.java-t is, ezert a compiler azt is feldolgozza, es eszreveszi h a Utensilnek es a Dessertnek ket defje is van
+
+ha "javac main.java" v "javac Main.java Utensil.java" formaban compilolunk akkor ugy fog viselkedni mielott megirtuk volna a Dessert.java-t, azaz kiirja h "pancake". de ha "javac Dessert.java Main.java" formaban forditunk akkor "potpie" lesz a kimenet. tehat a prg behavje fugg attol h a source fileok mileyn sorrendben adodnak at a compilernek, ami unacceptable
+
+mo egyszeru, splitteljuk a top-level classokat (esetunkben az Utensil es a Dessert) separate source fileokba. ha azon gondolkoznank h tobb top-level classt akarunk egy source fileba tenni, akkor fontoljuk meg a static member classok hasznalatat (item 24) v h megis inkabb splitteljuk a classokat separate source fileokba. ha a classok kozott alarendeltsegi viszony van, akkor static member class haszn a jobb alternativa mert noveli az olvashatosagot, a classok accessibilityje pedigg csokkentheto ha privatekent dekl oket (item 15)
+public class Test {
+  main() { sout(Utensil.NAME + Dessert.NAME);
+  private static class Utensil { static final String NAME = "pan";
+  private static class Dessert { static final String NAME = "cake";
+
+tehat sose tegyunk tobb top-level classt v ifacet uabba a source fileba. ha ezt betartjuk az garantalja h compile timeban nem lesz tobb def egy single classra. ez pedig garantalja h a compilation altal generalt fileok, es a letrejovo prg behavja fgtl lesz a sorrendtol amelyben a source fileokat atadjuk a compilernek

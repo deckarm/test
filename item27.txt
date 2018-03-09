@@ -1,0 +1,25 @@
+ITEM 27: ELIMINATE UNCHECKED WARNINGS
+
+ha genericsekkel prgozunk akkor szamos compiler warningot fogunk latni: unchecked cast, unchecked method invocation, unchecked parametrized vararg type, unchecked conversion
+
+vannak konnyen eliminalhato unchecked warningok. pl. tevedesbol a kovetkezot irjuk: Set<Lark> exaltation = new HashSet();
+"warning: [unchecked] unchecked conversion Set<Lark> exaltation = new HashSet(); required: Set<Lark> found: HashSet"
+warning alapjan konnyen tudjuk javitani: Set<Lark> exaltation = new HashSet<>(); 
+compiler a diamond oper alapjan inferelni tudja a megfelelo actual type paramot (Lark)
+
+mas warningokat sokkal nehezebb eliminalni. ha olyan warningot talalunk amit at kell gondolni, ne adjuk fel, probaljunk minden unchecked warningot eliminalni; ha sikerul akkor a kodunk typesafe lesz. azaz nem kapunk runtime ClassCastExceptiont es jobb eselyeink vannak h a prgunk az elvartnak megfeleloen muk
+
+ha nem tudunk egy warningot elim, de biztosak vagyunk benne h a warningot okozo kod typesafe, akkor (es kizarolag akkor) suppressalhatjuk a warningot a @SuppressWarnings("unchecked") annotacioval. ha anelkul suppressalunk h megbizonyosodnank a typesaferol az hamis biztonsagerzet; a kod lefordulhat warningok nelkul de runtime ClassCastException lehet. ha viszont ignoraljuk az olyan unchecked warningokat amikrol tudjuk h safek, akkor nem biztos h eszrevesszuk amennyiben egy uj, valos problemat jelento warning tunik fel, elveszhet az ignoralt false alarmok kozott
+
+SuppressWarning anno bmilyen deklon hasznalhato, local vartol kezdve teljes classon. mindig a leheto legisebb scopeon hasznaljuk. ez tip var dekl lesz v egy rovid metodus/konstr. teljes classon sose hasznaljuk, mert ezzel critical warningokat maszkolhatunk el
+
+amennyiben olyan metoduson v konstron haszn, ami tobb mint egy sor hosszu, akkor lehet h local var deklba tudjuk mozgatni. bar uj local vart kell dekl, de megeri
+public <T> T[] toArray(T[] a) { ... return (T[]) Arrays.copyOf(elements, size, a.getClass()); ...
+"ArrayList.java:305: warning: [unchecked] unchecked cast: return (T[]) Arrays.copyOf(elements, size, a.getClass()); required: T[] found: Object[]"
+return stmtre nem tehetjuk az annot mert nem dekl. csabitonak tunhet h az egesz metodusra rategyuk, de ne tegyuk; helyette dekl egy local vart a return value szamara es annotaljuk meg a dekljat
+public <T> T[] toArray(T[] a) { ... @SuppressWarnings("unchecked") T[] result = (T[]) Arrays.copyOf(elements, size, a.getClass()); return result; ...
+ez igy mar warningok nelkul lefordul es min a scope amelyben unchecked warningok vannak suppressalva
+
+valahanyszor hozzaadunk egy ilyen annot, adjunk hozza egy magyarazo kommentet is h miert safe. ezaltal masok jobban fogjak erteni, emellett pedig csokk a vge h vki modifolja a kodot "so as to make the computation unsafe". ha nehezen tudjuk megirni a kommentet akkor gondoljuk at h lehet h nem is safe
+
+summary: unchecked warningok fontosak, ne ignoraljuk oket. minden unchecked warning egy lehetseges runtime ClasscastException. probaljuk eliminalni oket. ha nem tudunk egy unchecked warningot eliminalni de tudjuk h az adott kod typesafe, akkor a leheto legszukebb scopera rakott @SuppressWarning("unchecked") annoval suppressolhatjuk. a suppressolas okat tuntessuk fel kommentben

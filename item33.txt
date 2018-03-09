@@ -1,0 +1,62 @@
+ITEM 33: CONSIDER TYPESAFE HETEROGENEOUS CONTAINERS
+
+genericsek gyakran haszn colloknal, pl. Set<E>, Map<K,V> es single-element containereknel, pl. ThreadLocal<T>, AtomicReference<T>. minden ilyen esetben a container van parametrizalva. igy containerenkent fix szamu paramot lehet megadni, normal esetben pont erre van szuks. Set-nek egy type paramja van, ami az elem typeot repr, Map-nek ketto, ami a key es value tyeot repr stb
+
+neha ennel nagyobb flex kell. pl. egy DB rownak akarmennyi columnja lehet es jo lenne mindegyiket typesafe modon accessalni. szerencsere van ra mod: container helyett a keyt kell parametrizalni. aztan adjuk oda a parametrized keyt a containernek value inserthez/retrievehez. a generic type sys garantalja h a value type "agrees with its key"
+
+egyszeru pelda, Favorites class amely lehetove teszi clientjei szamara h tetszoleges szamu typebol taroljanak es retrieveljenek egy favorite instanceot. a type Class objectje lesz a parametrized key. ez azert muk mert a Class class generic. egy class literal typeja nem egyszeruen Class hanem Class<T>. pl. a String.class typeja Class<String> az Integer.class typeja pedig Class<Integer>. amikor egy class literalt adunk at metodusok kozt compile-time es runtime info komm celjabol, az un type token
+
+Favorites class APIja egyszeru. ugy nez ki mint egy map, csak a key parametrized, es nem a map. a client egy Class objt ad at amikor favoriteket settel/gettel
+public class Favorites { //typesafe heterogeneous container pattern API
+  public <T> void putFavorite(Class<T> type, T instance);
+  public <T> T getFavorite(Class<T> type);
+
+peldaprg ami a Favorites classt haszn
+main() { 
+  Favorites f = new Favorites(); 
+  f.putFavorite(String.class, "Java"); f.putFavorites(Integer.class, 0xcafebabe); f.putFavorite(Class.class, Favorites.class);
+  String favoriteString = f.getFavorite(String.class); int favoriteInteger = f.getFavorite(Integer.class); Class<?> favoriteClass = f.getFavorite(Class.class);
+  sout(favoriteString, favoriteInteger, favoriteClass.getName());
+
+egy Favorites instance typesafe: sosem fog Integert returnolni amikor Stringet kerunk. ezenkivul heterogeneous: normal mappel ellentetben minden key typeja mas. ezert typesafe heterogeneous containernek hivjuk. az implja meglepoen rovid
+private Map<Class<?>,Object> favorites = new HashMap<>();
+public <T> void putFavorite(Class<T> type, T instance) { favorites.put(Objects.requireNonNull(type), instance);
+public <T> T getFavorite(Class<T> type) { return type.cast(favorites.get(type));
+
+minden Favorites instance mogott egy favorites nevu private Map<Class<?>,Object> map all. azt gondolhatnank h nem tudunk semmit tenni bele az unbounded wildcard type miatt, de valojaban igen. vegyuk eszre h a wildcard type nested: nem a map typeja a wildcard type, hanem a key typeja. ez azt jelenti h minden keynek kulonbozo parametrized typeja lehet: az egyik lehet Class<String>, a masodik Class<Integer> stb. ez a heterogeneity
+
+vegyuk eszre tovabba h a favorites map value typeja egyszeruen Object. maskent, a map nem garantalja a type kapcsolatot a keyek es valuek kozt, ami az h minden value typeja megfelel a keye altal repr typenak. a Java type sys nem eleg eros h kifejezze ezt. de mi tudjuk h igy van, es ki fogjuk haszn a favorite retrievelesnel
+
+putFavorite() impl trivialis: egyszeruen berak a favoritesbe egy mappinget a megadott Class objrol a megadott favorite instancera. mint irtuk, ez igy discardolja a key es a value kozti "type linkaget"; nem fog tudni arrol h a value a key egy instancea. de ez igy OK, mert a getFavorites() metodus ujra letrehozza a linkaget
+  
+getFavorite() impl trukkosebb. eloszor kigetteli a favorites mapbol a valuet ami a megadott Class objhoz kapcs. ez a megfelelo obj ref amit returnolni kell, de rossz compile-time typeja van: Object (ami a favorites map value typeja) nekunk pedig T kell returnolni. ezert a getFavorite() impl dynamically castolja az obj reft a Class obj altal repr typera, a Class cast() metodusaval
+
+cast() metodus a Java cast oper dynamic analogiaja. egyszeruen csekkeli h az argja a Class obj altal repr type egy instancea. ha igen, akkor returnoli az argt; egyebkent ClassCastExceptiont dob. tudjuk azt h a getFavorite()-ban levo cast invocation nem fog ClassCastExceptiont dobni, felteve h a client kod tisztan lefordult. maskent mondva, tudjuk h a favorites mapban levo valuek mindig matchelik a keyuk typejat
+
+miert jo a cast() metodus nekunk ha egyszeruen csak returnoli az argjat? cast() signatureja kihaszn h a Class class generic. a return typeja a Class obj type paramja
+public class Class<T> { T cast(Object obj);
+ez pont az amire a getFavorite() metodusnal szukseg van; igy tudjuk a Favoritest typesafe tenni anelkul h unchecked castot kellene vegeznunk T-be
+
+Favorites classnak ket limitationja van. eloszor, egy rosszindulatu client corruptolhatja egy Favorites instance type safetyjet, ha raw formajaban haszn egy Class objt. a client kod unchecked warningot generalna. ez uaz mint a normal coll implknal (HashSet, HashMap); be tudunk rakni Stringet egy HashSet<Integer>-be ha a raw HashSet typeot haszn (item 26). de elerhetjuk a runtime safetyt ha megfizetjuk az arat. ugy tudjuk bizt h a Favorites sose violalja a type invarjat, ha a putInstance() csekkeli h az instance param tenylegesen a type param altal repr type egy instancea-e, ezt dynamic casttal tudjuk megtenni: favorites.put(type, type.cast(instance));
+
+java.util.Collections-ban vannak coll wrapperek amelyek uezt a trukkot haszn (checkedSet, checkedList, checkedMap stb.). a static factoryjaik egy (v ket) Class objt vesznek at a coll (v map) mellett. a static factoryk generic metodusok, amelyek bizt h a Class obj es a coll compile-time typejai matcheljenek. a wrapperek reificationt adnak az altaluk bewrappelt collhoz. pl. a wrapper ClassCastExceptiont dob, ha vki Coint probal berakni Collection<Stamp>-be. az ilyen wrapperekkel jol le lehet trackelni az olyan client kodot, ami nem megfeleloen typed elemet ad hozza 
+
+a masik limtation h a Favorites class nem hasznalhato non-reifiable typeon (item 28). maskent, tudunk tarolni Stringet vagy String[]-et, de String<List>-et nem. ha megprobaljuk, a prgunk nem for leford. ennek oke h List<String> objhoz nem tudunk Class objt szerezni. a List<String>.class class literal syntax error. List<String> es List<Integer> uazt a Class objt sharelik, ami List.class. nem mukodne a Favorites obj internaljaival ha a List<String>.class es a List<Integer>.class "type literalok" legalok lennenek es uazt az obj reft returnolnek. erre a limitationra nincs satisfactory workaround
+
+a Favorites altal haszn type tokenek unboundedek: getFavorite() es putFavorite() bmilyen Class objt elfogad. neha limitalni kellhet a typeokat amik egy metodusnak atadhatoak. ez bounded type token segitsegevel elerheto, ami egy olyan type token ami egy boundot ad meg h mely type reprhato, bounded type param (item 30) v bounded wildcard (item 31) segitsegevel
+
+az annotations API (item 39) surun haszn bounded type tokeneket. pl. metodus amely runtime olvas ki egy annot. ez az AnnotatedElement ifaceben van, amely refl typeokkal van impl, amelyek classokat, metodusokat, fieldeket es egyeb prg elemeket repr
+public <T extends Annotation> T getAnnotation(Class<T> annotationType);
+az annotationType arg egy bounded type token ami egy anno typeot repr. a metodus az element ilyen typeu annojat returnoli ha van neki v nullt ha nincs. lenyegeben egy annotated element egy typesafe heterogeneous container amelynek a keyei anno typeok
+
+tfh van egy Class<?> typeu objunk, es at akarjuk adni egy olyan metodusnak ami egy bounded type tokent var, mint amilyen a getAnnotation(). castolhatjuk az objt Class<? extends Annotation>-ra, de ez unchecked, ezert compile-time warningot general (item 27). szerencsere a Class class nyujt egy instance metodust ami ilyen castot hajt vegre safely (es dynamically). a metodus neve asSubclass(), es atcastolja a Class objt amin meghivtak, a class azon subclassava amit az argja repr. ha a cast sikerul akkor a metodus az argjat returnoli; ha failel akkor ClassCastExceptiont dob
+
+igy kell haszn az asSubclass() metodust h kiolv egy annot amelynek a typeja compile timeban unknown. ez a metodus error v warning nelkul lefordul
+static Annotation getAnnotation(AnnotatedElement element, String annotationTypeName) {
+  Class<?> anntationType = null; // unbounded type token
+  try { annotationType = Class.forName(annotationTypeName); } catch(Exception ex) { throw new IllegalArgumentException(ex);
+  return element.getAnnotation(annotationType.asSubclass(Annotation.class));
+  
+summary: genericsek normal hasznalata, amire jo pelda a coll APIk, containerenkent fix szamu type paramra restrictel. ezt ugy tudjuk megkerulni ha a type paramot a keyre es nem a containerre tesszuk. az ilyen typesafe heterogeneous containerekhez Class objkat lehet haszn keykent. az ilyen modon haszn Class objt type tokennek hivjak. szinten lehet haszn custom key typeot. pl. lehet egy DatabaseRow type ami egy DB rowt (ez a container) repr, a keye pedig egy generic Column<T> type
+
+
