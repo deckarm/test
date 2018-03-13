@@ -1,0 +1,26 @@
+ITEM 36: USE ENUMSET INSTEAD OF BIT FIELDS
+
+ha egy enumerated type elemeit fokent setekben haszn, akkor gyakori az int enum pattern haszn (item 34), a 2 hatvanyait assignolva az egyes constantokhoz
+public class Text {
+  public static final int STYLE_BOLD = 1 << 0; //1
+  public static final int STYLE_ITALIC = 1 << 1; //2
+  ...
+  public void applyStyles(int styles) { ... } 
+
+  ezt a reprt haszn bitwise OR operrel tudunk 0 v tobb constantot setbe kombinalni, un. bit field: text.applyStyles(STYLE_BOLD|STYLE_ITALIC);
+szinten lehetove teszi a set operek mint union es intersection eff hasznalatat bitwise aritmetikaval. de a bit fieldeknek megvan az osszes hatranya mint az int enum constantoknak, meg tobb is. bit fieldet meg nehezebb interpretalni mint egy int enum constantot ha numberkent van kiprintelve. nincs konnyu mod vegigiteralni a bit field altal repr elemeken. es az API irasakor predictalni kellene a max bitszamot amire valaha szuksegunk lesz, es ennek megfeleloen megval a bit field typejat (tip int v long). ha egyszer ezt rogzitettuk akkor nem lephetjuk tul a widthjet (32 v 64 bit) az API megvalt nelkul
+
+egyes prgozok akik int constantok helyett mar enumot haszn, meg mindig ragaszkodnak a bit fieldekhez amikor constantok setjet kell atadniuk, de nem kellene mert van jobb mo. java.util.EnumSet class hatekonyan repr egy enum typebol szarm valuek setjet. ez a class impl a Set ifacet, es nyujtja azt a richnesst, type safetyt es interoperabilityt mint bmely Set impl. de internally minden EnumSet bit vectorkent van repr. ha az underlying enum typenak 64 v kevesebb eleme van (mint a legtobbnek) akkor az egesz EnumSetet egy single long repr, tehat a perfje ~ bit field. bulk operek mint removeAll() es retainAll() bitwise aritmetikaval vannak impl, uugy ahogy bit fieldek eseten manualisan csinalnank. de vedve vagyunk a manualis bit manipulalas problemaitol es error-pronesagatol, mert az EnumSet elvegzi helyettunk a munkat
+
+elobbi pelda enum setekkel
+public class Text {
+  public enum Style { BOLD, ITALIC...
+  public void applyStyles(Set<Style> styles) { ... } 
+client ami EnumSet instanceot ad at, felh az EnumSet altal nyujtott static factory metodust a set krealasra: text.applyStyles(EnumSet.of(Style.BOLD, Style.ITALIC));
+
+vegyuk eszre h az applyStyles() metodus Set<Style>-t vesz at es nem EnumSet<Style>-t. bar valoszinu h minden client EnumSetet fog atadni, alt jobb practice az iface typeot atvenni mint az impl typeot (item 64). ez persze lehetove teszi h vmi unusual client vmi mas Set implt adjon be
+
+summary: csak azert mert egy enumerated typet setekben haszn, nincs ok ra h bit fieldekkel repr. EnumSet kombinalja a bit fieldek tomorseget es perfjet az enum typeok elonyeivel (item 34). EnumSet egyetlen igazi hatranya h Java 9-ben egyelore meg nem lehet immut EnumSet-et krealni, de ez kesobbi releasekben valszeg meg lesz oldva. addig EnumSet bewrappelheto Collections.unmodifiableSet()-el, de ez a tomorseg es perf karara megy
+  
+  
+  
