@@ -1,0 +1,72 @@
+ITEM 39: PREFER ANNOTATIONS TO NAMING PATTERNS
+
+regen gyakori volt a naming patternek haszn annak jelzesere h egyes prg elemek spec kezelest igenyelnek egy tool v fw reszerol. pl. rel4 elott a JUnit elvarta h a teszt metodusok neve "test"-el kezdodjon. ez muk de szamos hatranya van. pl. typok failurekhez vezethetnek a hatterben. pl. tevedesbol tset...() lesz a metodus neve; JUnit3 nem jelzi h ez problema lenne, de nem is futtatja le a tesztet
+
+masik hatrany h nincs mod azt bizt h csak a megfelelo prg elemeken van haszn. pl. tfh egy class neve TestSafetyMechanisms azt remelve h JUnit3 autom leteszteli az osszes metodusat, azok nevetol fgtlol. JUnit3 megint csak nem jelzi h ez problema lenne, de nem is futtatja le a teszteket
+
+tovabbi hatrany h nem nyujt jo modot a param valuek osszekapcsolasara a prg elemekkel. pl. tfh egy olyan test categoryt akarunk tam, ami akkor sikeres ha egy adott exct dob. az exc type a teszt paramja. beleenkodolhatjuk az exc type nevet a teszt metodus nevebe vmilyen naming patternnel de ez csunya es fragile (item 62). a compiler nem fogja tudni h a string amelynek elvileg egy exct kellett megneveznie, tenyleg azt tette-e. ha a megnevezett class nem letezik v nem egy exc, ez nem fog kiderulni amig le nem futtatjuk a tesztet
+
+az annotationok megoldottak az osszes fenti problemat, es rel4-tol JUnit is haszn oket. ebben az itemben egy jatek test fwt fogunk irni az annok muk bemutatasara. tfh egy anno typeot akarunk def, ami olyan teszteket jelez amelyek autom futnak, es akkor failelnek ha exct dobnak
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.METHOD)
+public @interface Test {}
+
+a Test anno type deklja maga is meg van annotalva a Retention es Target annokkal. az ilyen anno type dekln levo annokat meta-annonak hivjak. a @Retention(RetentionPolicy.RUNTIME) meta-anno azt jelzi h a Test annokat runtime kell retainelni. enelkul a Test annok nem lennenek lathatoak a test tool szamara. a @Target(ElementType.METHOD) meta-anno azt jelzi h a Test anno csak metodus deklkon legal: nem rakhato class deklra, field deklra v egyeb prg elemekre
+
+Test anno dekl kommentjeben "Use only on parameterless static methods". szep lenne ha a compiler ezt tudna enforcolni, de nem tudja hacsak nem irunk ra anno processort (javax.annotation.processing). ennek hianyaban azonban ha Test annot instance metodus deklra rakunk v olyan metodusra aminek van egy v tobb paramja, a test prg tovabbra is le fog fordulni, es a test toolnak runtime kell szembeneznie a problemaval
+
+Test anno un marker anno, mert nincs paramja, csak "markolja" az annotalt elemet. ha a prgozo elgepelne a nevet v mas prg elemre probalna rakni mint metodus dekl, akkor a prg nem fordulna le
+@Test public static void ml() {} //pass
+@Test public static void m3() { throw new RuntimeException(); } //fail
+@Test public void m5() {} //invalid use, nonstatic metodus
+a tovabbi, meg nem annotalt metodusokat a test tool ignoralja
+
+a Test annonak nincs kzvtl hatasa a Sample class semanticsjara. csak arra szolgal h infot nyujtson az erdeklodo prgk szamara. altalanosabban, az annok nem valt meg az annotalt kod semanticsjat, de lehetove teszik h bizonyos toolok spec modon kezeljek. pl. egyszeru test runner prg, aminek lenyege
+Class<?> testClass = Class.forName(args[0]); for (Method m : testClass.getDeclaredMethods()) { if (m.isAnnotationPresent(Test.class)) { try { m.invoke(null); } catch (InvocationTargetException wrappedExc) { Throwable exc = wrappedExc.getCause(); ... } } catch (Exception exc) { ... }
+fully qualified classnamet vesz at a command linerol es reflectionnal megfuttatja a class minden Test-annotalt metodusat a Method.invoke() segitsegevel. az isAnnotationPresent() metodus mondja meg h melyik metodusokat kell futtatni. ha egy test metodust exct dob, azt a reflection InvocationTargetExceptionbe wrappeli; ezt catcheljuk es kigetteljuk belole a test metodus altal dobott eredeti exct
+
+amennyiben egy test metodus refl segitsegevel torteno invokolasa bmilyen mas exct dob mint InvocationTargetException, az a Test anno invalid hasznt jelzi, amire compile timeban nem derult feny. ide tart ha instance metoduson van az anno, ha a metodusnak van paramja v ha a metodus inaccessible. ezek miatt kell a masodik catch blokk
+
+most krealjuk meg az annot azokhoz a tesztekhez amelyek akkor sikeresek ha egy adott exct dobnak
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.METHOD)
+public @interface ExceptionTest { Class<? extends Throwable> value(); }
+az anno paramjanak typeja Class<? extends Throwable>, ami azt jelenti h "the Class object for some class that extends Throwable" es lehetove teszi h az anno usere exc (v error) typeot adjon meg. ez egy bounded type token (item 33). 
+
+anno hasznalata. vegyuk eszre h az anno param valuejakent class literalokat haszn
+@ExceptionTest(ArithmeticException.class) public static void m1() { int i = 0; i = i/i; } //pass
+@ExceptionTest(ArithmeticException.class) public static void m2() { int[] a = new int[0]; int i = a[1]; } //fail (wrong exc)
+@ExceptionTest(ArithmeticException.class) public static void m3() { } //fail (no exc)
+
+a modositott test runner tool
+if (m.isAnnotationPresent(ExceptionTest.class)) { try { m.invoke(null); } catch (InvocationTargetException wrappedExc) { Throwable exc = wrappedExc.getCause(); Class<? extends Throwable> excType = m.getAnnotation(ExceptionTest.class).value(); if(excType.isInstance(exc)) { //passed } else { //failed }
+hasonlo a Test annot feldolg kodhoz, a kul h ez kiextractolja az anno param valuejat es csekkeli h a test altal dobott exc typeja megfelelo-e. nincsenek expl castok ezert nincs ClassCastException veszely. az h a test prg lefordul, garantalja h az anno paramjai valid exc typeokat repr; egy kivetellel: amennyiben az anno param compile timeban valid voltak, de az adott exc typeot repr class file runtimeban mar nincs jelen, ekkor a test runner TypeNotPresentExceptiont fog dobni
+
+ha azt akarjuk h a teszt akkor menjen at ha tobb megadott exc kozul dobja az egyiket. anno mech ezt is lehetove teszi; az ExceptionTest anno param typeja legyen Class objk arraye:  Class<? extends Exception>[] value();
+az annokban levo array paramok syntaxa flex. az eddigi ExceptionTest annok az uj, array-param verzioval is validok, egyelemu arrayek lesznek. tobbelemu arrayek megadasahoz tegyuk az elemeket kapcsos zarojelbe es valasszuk el vesszovel
+@ExceptionTest({ IndexOutOfBoundsException.class, NullPointerException.class}) public static void doublyBad() { ... }
+
+a modositott test runner tool
+if (m.isAnnotationPresent(ExceptionTest.class)) { try { m.invoke(null); } catch (InvocationTargetException wrappedExc) { Throwable exc = wrappedExc.getCause(); Class<? extends Exception>[] excTypes = m.getAnnotation(ExceptionTest.class).value(); for(Class<? extends Exception> excType : excTypes) { if(excType.isInstance(exc)) { //passed
+
+Java 8-ban van egy masik mod is a multivalued annokra. ahelyett h array parammal dekl egy anno typeot, megannotalhatjuk az anno deklt a @Repeatable meta-annoval, igy jelezve h az anno ismetelten hasznalhato egy elemen. a meta-anno egy paramot vesz at, ami a containing anno type class obja, amelynek paramja az anno type arraye. ExceptionTest anno dekl igy nez ki ezzel az approachal. vegyuk eszre h a containing anno typeot meg kell annotalni a megfelelo retention policyval es targettel, kulonben a dekl nem fog lefordulni
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.METHOD)
+@Repeatable(ExceptionTestContainer.class) 
+public @interface ExceptionTest { Class <? extends Exception> value(); }
+
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.METHOD)
+public @interface ExceptionTestContainer { ExceptionTest[] value();
+
+es igy nez ki a test array-valued anno helyett repeated annoval 
+@ExceptionTest(IndexOutOfBoundsException.class) @ExceptionTest(NullPointerException.class) public static void doublyBad() { ... }
+
+repeatable annok processalasanal ovastossag szukseges. repeated anno egy synthetic annot kreal a containing anno typebol. a getAnnotationsByType() metodus elsiklik efolott es lehet haszn egy repeatable anno type repeated es non-repeated annoinak accessalasahoz is. az isAnnotationPresent() viszont ugy tekinti h a repeated annok nem az anno typebol hanem a containing anno typebol vannak. ha egy elemen vmilyen typebol repeated anno van, es az isAnnotationPresent() metodussal csekkeljuk h az elemen van-e anno abbol a typebol, akkor azt fogja mondani h nem. tehat ha ezzel a metodussal akarjuk egy anno type jelenletet csekkelni, akkor a prg csondben ignoralni fogja a repeated annokat. hasonloan, ha a containing anno typeot akarju csekkelni ezzel a metodussal, akkor a prg csondben ignoralni fogja a non-repeated annokat. ahhoz h tudjuk detektalni a repeated es non-repeated annokat is az isAnnotationPresent() metodussal, csekkelnunk kell az anno typera es a containing anno typera is. a test runner tool relevans resze ezek utan igy nez ki
+if(m.isAnnotationPresent(ExceptionTest.class) || m.isAnnotationPresent(ExceptionTestContainer.class)) { try { m.invoke(null) } catch(InvocationTargetException wrappedExc) { Throwable exc = wrappedExc.getCause(); ExceptionTest[] excTests = m.getAnnotationsByType(ExceptionTest.class); for(ExceptionTest excTest : excTests) { if(excTest.value().isInstance(exc)) { //passed } 
+
+repeatable annokat azert adtak hozza h noveljek az olyan src kod olvashatosagat ami uazon anno type tobb instanceat applyolja uarra a prg elemre. haszn, ha ugy gondoljuk h az olvashatosag megeri, de emlekezzunk ra h a deklban es processingben boilerplate van, es h a processing error-prone
+
+a bemutatott test fw csak jatek, de jol mutatja az annok felsobbrenduseget a naming patternekkel szemben. ha olyan toolt irunk, ami igenyli h a prhozok infot adjanak a src kodhoz, akkor def megfelelo anno typeokat. nincs ok ra h naming patterneket haszn, ha annokat is lehet haszn
+
+ezzel egyutt, a tool kreatorokon kivul a legtobb prgozonak nincs szuksege arra h anno typeokot def. de minden prgozonak erdemes a Java altal nyujtott predef anno typeokat haszn (item 27, item 40). szinten fontoljuk meg az IDE v static ana tool altal nyujtott annok hasznalatat. az ilyen annok javithatjak a tool altal nyujtott diagnostic info minoseget. de ezek az annok meg nincsenek standardizalva, ugyhogy ha toolt cserelunk v uj standard jon ki akkor modositas lehet szukseges

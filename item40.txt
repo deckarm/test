@@ -1,0 +1,18 @@
+ITEM 40: CONSISTENTLY USE THE OVERRIDE ANNOTATION
+
+Java libek szamos anno typeot tart. tip prgozo szamara legfontosabb az @Override. ezt csak metodus deklon lehet haszn, es azt jelzi h a megannotalt metodus dekl overridol egy supertypeban levo deklt. ha konz hasznaljuk akkor szamos bugtol ovhat meg minket
+tip pelda amikor az equals(Object) overridolas helyett equals(MyType) overloadolunk, igy MyType valojaban orokli az Object equals() metodusat. ez obj identityt csekkel, uugy mint az == oper, es igy equalnak gondolt MyType objkat distinctnek fog tekinteni pl. egy HashSetbe valo berakas soran, aztan meg nem fogjuk erteni h a set merete miert nagyobb
+
+szerencsere a compiler segithet nekunk megtalalni ezt a problemat, ha segitunk neki jelezve h overridolni kivanjuk az Object.equals()-t
+@Override public boolean equals(MyType b) { ... }
+ez forditasi hiba lesz: "method does not override or implement a method from a supertype", es egybol ra fogunk jonni h mi a gond
+
+haszn tehat az Override annot minden metodus dekln amelyrol ugy gondoljuk h suerclass deklt overridolnak. ez alol egy minor kivetel van. ha olyan classt irunk ami nem abstract, es overridol egy superclassban levo abstract metodust, akkor nem szukseges ratennunk az Override annot; mert ha egy nem abstract class nem overridol egy abstract superclass metodust, az eleve forditasi hiba lesz. de ha fel akarjuk hivni a figyelmet arra h ez egy overridolo metodus akkor nyugodtan megannotalhatjuk ezeket is. a legtobb IDEben beallithato h autom tegye ki az Override annokat ha overridolunk egy metodust
+
+legtobb IDEben ha beallitjuk a megfelelo csekket, akkor warningot general amennyiben olyan metodusunk van ami overridol egy superclass metodust de nincs rajta Override anno. ha konz hasznaljuk az Override annot akkor ezek a warningok a nem szandekolt overridingot jelzik. ezzel kieg a compiler error msgket amelyek jelzik h vmit nem overridoltunk. a compiler es az IDE igy tudja bizt h pontosan ott overridoljuk a metodusokat ahol akarjuk es sehol mashol
+
+Override annot lehet haszn olyan metodus deklkon is amelyek iface deklkat overridolnak. default metodusok hozzaadasa utan jo practice ha haszn az Override-ot iface metodusok concrete impljain, ezzel bizt h a signature correct. ha tudjuk h az ifaceben nincsenek default metodusok akkor valaszthatjuk azt is h nem tesszuk ra az Override annokat az iface metodusok concrete impljaira, clutter-- celjabol
+
+abstract classban v ifaceben megeri megannotalni minden olyan metodust amirol ugy gondoljuk h superclass v superiface metodusokat overridolnak, akar concrete akar abstract. pl. a Set iface nem ad uj metodusokat a Collection ifacehez, ezert az Override anno rajta van az osszes benne levo metodus dekln, igy bizt h veletlenul se adjon uj metodusokat a Collection ifacehez
+
+summary: compiler jopar hibatol meg tud vedeni minket ha haszn az Override annot minden olyan metodus dekln amirol ugy gondoljuk h supertype deklt overridol, egy kivetellel: concrete classokban nem szukseges megannotalnunk az olyan metodusokat amelyek abstract metodus deklkat overridolnak (bar nem is karos)

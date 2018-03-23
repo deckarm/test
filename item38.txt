@@ -1,0 +1,37 @@
+ITEM 38: EMULATE EXTENSIBLE ENUMS WITH INTERFACES
+
+enum typeok szinte minden szempontbol jobbak mint a konyv elso kiadasaban bemutatott typesafe enum pattern. az egyetlen kivetel az extensibility ami az eredeti patternnel lehetseges de a nyelvi eszkoz nem tam. makskent, a pattern segitsegevel egy enumerated type extendalni tud egy masikat, de a nyelvi eszkozzel nem lehetseges. ez nem veletlen. legtobb esetben az enum extensibility nem jo otlet. zavaro h egy extension type elemei a base type instanceai es nem forditva. nincs jo mod vegigenumeralni a base type es az extensionjainak elemein. az extensibility komplikalna a design es az impl szamos aspektusat
+
+ezzel egyutt az extensible enumerated typeoknak van egy relevans use case, az oper codes (opcodes). opcode egy enumerated type amelynek elemei opereket repr vmilyen gepen, pl. item 34 Operation type amely egy egyszeru calculator funcjait repr. neha hasznos ha egy API userei nyujthatjak a sajat operjeiket, lenyegeben extendalva az API altal nyujtott operek setjet
+
+szerencsere ezt a hatast el lehet erni enum typeokkal is. kihaszn h enum typeok tudnak ifaceket impl, def egy ifacet az opcode typenak es egy enumot amely az iface standard implja. pl. az Operation type extensible verzioja
+public interface Operation { double apply(double x, double y);
+public enum BasicOperation implements Operation {
+  PLUS("+") { public double apply(double x, double y) { return x + y; } }, ...
+  private final String symbol;
+  BasicOperation(String symbol) { this.symbol = symbol;
+  public String toString() { return symbol;
+
+az enum type (BasicOperation) nem extensible, az iface type (Operation) viszont igen, es az APIkban az iface typet haszn az operek reprjara. defhatunk egy masik enum typeot ami implja ezt az ifacet es ennek az uj typenak az instanceait lehet haszn a base type helyett. pl. tfh egy extensiont akarunk def a korabban latott operation typehoz, ami a hatvany es maradek opereket tart. ehhez csak irnunk kell egy enum typeot ami az Operation ifacet impl
+public enum ExtendedOperation implements Operation {
+  EXP(^) { ... }, REMAINDER("%") { ... };
+  //symbol field, konstr, toString() uugy mint BasicOperationnel
+
+az uj opereket barhol lehet haszn ahol a basic opereket, felteve ha az API az iface typeot haszn (Operation) es nem az implt (BasicOperation). vegyuk eszre h nem kell dekl az abstract apply() metodust az enumban mint ahogy az instance-specific metodus implkat tart nonextensible enumban kellett. ez azert van mert az abstract metodus az iface (Operation) membere
+
+nem csupan lehetseges egy "extension enum" instanceot atadni barhol ahol egy "base enumot" varnak, de lehetseges atadni egy teljes extension enum typeot atadni, es az elemeit haszn a base type elemein tul v azok helyett. pl. teszt prg amely vegrehajtja az osszes def operationt
+main() { double x = Double.parseDouble(args[0]); double y = Double.parseDouble(args[1]); test(ExtendedOperation.class, x, y);
+private static <T extends Enum<T> & Operation> void test(Class<T> opEnumType, double x, double y) { for(Operation op : opEnumType.getEnumConstants()) sout(x, op, y op.apply(x,y));
+
+vegyuk eszre az extended operation type class literalja (ExtendedOperation.class) van atadva a main()-bol a test()-be h leirja az extended operek setjet. a class literal bounded type tokenkent szolgal (item 33). az opEnumType param komplex deklja bizt h a Class obj egyarant repr egy enumot es az Operation subtypejat, ami pont az ami szukseges ahhoz h az elemeken vegigiteraljunk es mindegyikre vegrehajtsuk a kapcs opert
+
+masik alternativa h class obj helyett egy Collection<? extends Operation> adunk at ami egy bounded wildcard type (item 31)
+main() { double x = Double.parseDouble(args[0]); double y = Double.parseDouble(args[1]); test(Arrays.asList(ExtendedOperation.values()),x,y);
+private static void test(Collection<? extends Operation> opSet, double x, double y) { for(Operation op: opSet) sout(x, op, y op.apply(x,y));
+ez igy kicsit kevesbe komplex es a test() metodus egy kicsit flexebb: lehetove teszi h a hivo tobb impl typebol kombinaljon ossze opereket. egyuttal viszont lemondunk arrol h EnumSet (item 36) v EnumMap (item 37) haszn a megadott opereken
+
+egy kis hatrany ha ifaceket haszn extensible enumok emulalasara h implk nem orokolhetoek egyik enum typerol a masikra. ha az impl kod nem relyol semmilyen staten, akkor rakhato az ifacebe, default implk segitsegevel (item 20). az Operation pelda eseteben az operhez kapcs symbol tarolasara/retrievelesere szolgalo logicot dupl kell a BasicOperationben es ExtendedOperationben. itt viszonylag keves a duplikalando kod; ha nagyobb mennyisegu shared func lenne, akkor encapsolhatnank egy helper classban v egy static helper metodusban h eliminaljuk a kod duplt
+
+a leirt patternt Java libekben is haszn. pl. java.nio.file.LinkOption enum type impl a CopyOption es OpenOption ifaceket
+
+summary: bar extensible enum tyeot nem tudunk irni, emulalni tudjuk ha irunk egy ifacet egy basic enum type melle, ami impl ezt azt ifacet. ez lehetove teszi h a clientek (v mas typeok) megirjak a sajat enumjaikat amelyek impljak az ifacet. ezeknek a typeoknak az instanceai aztan hasznalhatok ott ahol a basic enum type instanceai, felteve h az APIkat az ifacekre irtak
