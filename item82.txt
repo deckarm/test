@@ -1,0 +1,38 @@
+ITEM 82: DOCUMENT THREAD SAFETY
+
+ahogy egy class viselkedik, amikor a metodusait conc haszn, az egy fontos resze a clientekkel valo contractjanak. ha nem docoljuk le a class behavjanak ezt az aspectjet, akkor a usereknek feltetelezesekkel kell elniuk. ha ezek rosszak, akkor a prgjukban insufficient sync (item 78) v excessive sync (item 79) lehet. mindket esetben komoly hibak lehetnek
+
+neha hallunk olyat h egy metodusrol megmondhato h threadsafe ha a synchronized modifier benne van a docjaban. de ez nem igy van. normal korulmenyek kozt a synchronized nincs benne a Javadocban, espedig azert mert a synchronized jelenlete a metodus deklben egy impl detail, es nem az API resze. nem jelzi megbizhatoan h a metodus threadsafe
+
+tovabba az h a synchronized jelenlete eleg lenne a thread safety ledocolasara, az azt jelentene h a thread-safety egy all-or-nothing dolog. valojaban a thread safetynek szamos levelje van. a safe conc haszn biztositasahoz egy classnak egyertelmuen docolnia kell h milyen thread safety levelt tam. az alabbi lista nem teljes, de a common casek benne vannak
+- immutable: class instanceai constantok. nincs szukseg external syncre. pl. String, Long, BigInteger (item 17)
+- unconditionally threadsafe: class instanceai mutablek, de a classban eleg internal sync van ahhoz h az instanceai conc hasznalhatoak legyenek external sync nelkul. pl. AtomicLong, ConcurrentHashMap
+- conditionally threadsafe: mint az unconditionally threadsafe; de nehany metodusa external syncet igenyel safe conc hasznhoz. pl. a Collections.synchronized wrappers altal returnolt collok, amelyek iteratorai extarnal syncet igenyelnek
+- not threadsafe: class instanceai mutablek. conc hasznhoz a clienteknek minden metodus invocationt (v invocation seqet) external syncelessel kell korulvennie. pl. general-purpose coll implk, mint ArrayList, HashMap
+- thread-hostile: class unsagfe conc hasznra, meg akkor is ha minden metodus invocation external synccel van korulveve. thread hostility altalaban abbol szarm h static datat modifol synceles nelkul. szandekosan senki nem ir ilyen classt; az ilyenek tip abbol erednek h nem gondoltak at a conct. ha egy classrol v metodusrol kiderul h thread-hostile akkor tip ficaljak v deprecated lesz. pl. item 78 generateSerialNumber() metodus internal sync nelkul thread-hostile lenne
+
+ezek a kategoriak a thread-hostile kivetelevel nagyjabol megfelelnek a JCIP thread safety annoinak (Immutable, ThreadSafe, NotThreadSafe). az uncond es cond kategoriak egyarant a ThreadSafe anno ala tartoznak
+
+cond threadsafe class ledocolasat ovatosan kell. jelezni kell h mely invocation seqek igenyelnek external syncet, es mely locko(ka)t kell acqolni ezen seqek execelesehez. ez tip maganak az instancenak a lockja, de ne mindig. pl. a Collections.synchronizedMap() docja ezt irja
+"It is imperative that the user manually synchronize on the returned map when iterating over any of its collection views:"
+Map<K,V> m = Collections.synchronizedMap(new HashMap<>());
+Set<K> s = m.keySet(); //nem kell synchronized blockban lennie
+synchronized(m) { for(K key :s ) key.f(); } //m-re kell sync, nem s-re!
+"Failure to follow this advice may result in non-deterministic behavior."
+
+a class threadsafetyjenek leirasa alt a class docjaba tart, de az olyan metodusok amelyeknek spec threadsafety propertyjei vannak, a sajat docjukban kell ezeket leirjak. enum typeok immutjat nem szukseges docolni. ha a return typebol nem nyilvanvalo, akkor static factoryknak docolniuk kell a returnolt obj threadsafetyjet (ld. elobb Collections.synchronizedMap())
+
+ha egy class egy publicly accessible lockot haszn, az lehetove teszi a clientek szamara h metodus invocationok egy seqjet atomically futtassak, de ennek a flexnek ktge van. nem kompat azzal a high-perf conc controllal amit a conc collok haszn, pl. ConcurrentHashMap. client ezenkivul DOS attackot is csinalhat (szandekosan v accidentally) ha a publicly accessible lockot tul sokaig tartja
+
+h elkeruljuk ezt a DOS attackot, synchronized metodusok (amelyek publicly accessible lockot jelentenek) helyett lehet private lock objt haszn
+private final Object lock = new Object(); 
+public void foo() { synchronized(lock) { ... }
+mivel a private lock obj a classon kivulrol nem accessalhato, ezert a clientek nem interferalhatnak az obj syncjevel. lenyegeben az item 15 tanacsat haszn; encapsoljuk a lock objt az objba amelyet syncel
+
+vegyuk eszre h a lock field finalkent van dekl. ez preventalja h veletlenul megvalt a contentjet, ami unsync accesshez vezethetne (item 78). item 17 tancsa szerint minimizaljuk a lock field mutabilityjet. a lock fieldeket mindig finalkent kell dekl. akkor is ha monitor lockot haszn (mint itt) v a java.util.concurrent packagebol egy lockot
+
+a private lock obj idiomot csak uncond threadsafe classokban lehet haszn. cond threadsafe classokban nem, mert nekik docolniuk kell h a clientjeiknek mely lockokat kell acqolnia ha bizonyos metodus invocation seqeket akarnak vegrehajtani
+
+a private lock obj idiomot kulonosen jol lehet haszn inheritancere designolt classoknal (item 10). ha egy ilyen class a sajat instanceait hasznalna lockolasra, akkor egy subclass konnyen es nem szandekosan interferalhatna a base class egy operjevel v forditva. uazt a lockot kulonbozo celokra hasznalva a base class es a subclass "egymas labara lephet". ez nem csupan elmeleti problema, Thread classnal konkretan megtortent
+
+summary: minden classnak egyertelmuen docolnia kell a thread safety propertyjeit, vagy jol megfogalmazott leirassal v thread safety annoval. a synchronized modifier nem resze ennek a docnak. cond threadsafe classoknak docolnia kell h mely metodus invocation seqek igenyelnek extenral syncelest, es mely lockokat kell acqolni ha ezeket a seqeket akarjuk vegrehajtani. uncond thread class irasakor probaljunk synchronized metodusok helyett private lock objt haszn. ez megved a clientekkel v subclassokkal valo sync intereferenciatol, es nagyobb flexet nyujt "to adopt a sophisticated approach to concurrency control in a later release"
