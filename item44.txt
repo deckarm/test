@@ -1,0 +1,48 @@
+ITEM 44: FAVOR THE USE OF STANDARD FUNCTIONAL INTERFACES
+
+most h vannak a Javaban lambdak, az API iras best practicei jelentosen megvalt. pl. a GOF template method pattern, ahol egy subclass overridol egy primitiv metodust, hogy specializalja a superclass behavjet, sokkal kevesbe vonzo. a modern alternativa h nyujtsunk uerre egy static factoryt v konstrt, ami function objt vesz at. altalanosabban: sokkal tobb konstrt es metodust fogunk irni amelyek function objt vesznek at paramkent. fontos a megfelelo functional param helyes kival
+
+pl. LinkedHashMap. lehet haszn mint cachet, overridolva a protected removeEldestEntry() metodusat, amelyet a put() invokol minden alkalommal amikor uj keyt adunk a maphez. ha ez a metodust truet returnol, a map removolja a legregebbi entryjet, ami atadodik a metodusnak. az alabbi override lehetove teszi h a map 100 entryre nojon, aztan deleteli a legregebbi entryt minden alkalommal amikor uj keyt adunk hozza, megtartva a 100 legujabb entryt
+protected boolean removeEldestEntry(Map.Entry<K,V> eldest) { return size() > 100; }
+
+ez jol muk, de lamdbakkal jobbat tudunk csinalni. ha a LinkedHashMapet ma irnak, akkor lenne benne static factory v konstr ami function objt vesz at. removeEldestEntry() dekl alapjan azt hinnenk h a function objnak Map.Entry<K,V>-t kellene atvennie es booleant returnolnie, de nem egeszen: a removeEldestEntry() a size()-ot hivja h megkapja a mapben levo entryk szamat, ami azert muk mert a removeEldestEntry() a map instance metodusa. a konstrnak atadando function obj nem a map instance metodusa, es nem tudja azt capturolni se, mert a map meg nem letezik amikor a factoryja v konstrja invokoldik. ezert a mapnek at kell adnia onmagat is a function objnak. a functional iface dekl tehat kb igy nezne ki
+@FunctionalInterface interface EldestEntryRemovalFunction<K,V> { boolean remove(Map<K,V> map, Map.Entry<K,V> eldest);
+
+ez az iface jol muk, de nem szukseges uj ifacet dekl erre a celra. java.util.function szamos standard functional ifacet nyujt; ha vmelyiket tudjuk haszn akkor azt pref es ne irjunk erre a celra sajat functional ifacet. igy az APInk egyszerubb lesz, mert a conceptual surface--, vmint interoperability++ mivel szamos standard functional iface hasznos default metodusokat nyujt. pl. Predicate iface metodusokat nyujt predicatek kombinalasara. a fenti sajat EldestEntryRemovalFunction iface helyett a standard BiPredicate<Map<K,V>,Map.Entry<K,V>> ifacet celszeru haszn
+
+nem kell a java.util.functionban levo minden ifacere emlekezni, 6 legfontosabbol szarmaztathato a tobbi. az alap ifacek obj ref typeokon operalnak. Operator iface repr functionokat amelyek arg es result typeja uaz. Predicate iface repr functiont amelynek van egy argja es booleant returnol. Function iface repr functiont amelynek arg es return typeja kul. Supplier iface repr functiont amely nem vesz at argokat es egy valuet returnol (supplyol). Consumer repr functiont amely egy argot vesz at es nem returnol semmit, lenyegeben consumalva az argjat
+
+ofogl table (iface: function signature @@@ pelda)
+UnaryOperator<T>: T apply(T t) @@@ String::toLowerCase
+BinaryOperator<T>: T apply(T t1, T t2) @@@ BigInteger::add
+Predicate<T>: boolean test(T t) @@@ Collection::isEmpty
+Function<T,R>: R apply(T t) @@@ Arrays.asList
+Supplier<T>: T get() @@@ Instant::now
+Consumer<T>: void accept(T t) @@@ System.out::println
+
+ennek a 6 basic ifacenek vannak variantjai amelyek a primitiv int, long es double typeokon operalnak. a nevuk a basic iface nevekbol szarm, a primitiv typeokkal prefixelve oket. pl. egy predicate ami egy intet vesz at az IntPredicate, es egy binary operator ami ket long valuet vesz at es longot returnol az LongBinaryOperator. egyik variant type sem parametrized, kiveve a Function variantjait amelyek a return typeal vannak parametrizalva. pl. LongFunction<int[]> longot vesz at es int arrayt returnol
+
+Function ifacenek van 9 tovabbi variantja azokra az esetekre ahol a result type primitive. a src es result type mindig kul, mivel egy function egy typerol sajat magara az UnaryOperator. ha a src es a result type is primitiv, akkor prefixeljuk Functiont "SrcToResult"-al, pl. LongToIntFunction (6 variant). ha a src primitiv es a result obj ref akkor prefixeljuk Functiont "SrcToObj"-al, pl. DoubleToObjFunction (3 variant)
+
+ketargos verzioi vannak annak a harom basic ifacenek amelyeknel van ertelme: BiPredicate<T,U>, BiFunction<T,U,R> es BiConsumer<T,U>. BiFunctionnak vannak variantjai amelyek primitiv typeokat returnolnek: ToIntBiFunction<T,U>, ToLongBiFunction<T,U>, ToDoubleBiFunction<T,U>. Consumernek vannak ketargos variantjai, amelyek egy obj refet es egy primitive typeot vesznek at: ObjDoubleConsumer<T>, ObjIntConsumer<T>, ObjLongConsumer<T>. osszesen 9 ketargos variantja van a basic ifaceknek
+
+vegul van egy BooleanSupplier iface, a Suplier variantja ami boolean valuekat returnol. ez a boolean type egyetlen explicit emlitese a standard functional iface nevekben, de a Predicate es a 4 variantja tam a boolean return valuekat. a BooleanSupplier iface es az elozo bekezdesekben leirt 42 iface teszi ki az osszesen 43 standard functional ifacet. ez nem keves es nem is nagyon ortogonalis; uakkor a legtobb functional ifacet amire szuksegunk lehet megirtak, a neveik pedig eleg szabalyosak h meg tudjuk talalni ami kell nekunk
+
+a legtobb standard functional iface csak azert letezik h primitive typeokhoz nyujtson tamt. ne hasznaljunk basic func ifaceket boxed primitivekkel a primitiv functional ifacek helyett. muk, de violalja item 61 tanacsat: "prefer primitive types to boxed primitives". ha boxed primitiveket haszn bulk operekben, az sulyos perf-- lehet
+
+most mar tudjuk h tip standard functional ifaceket erdemes haszn ahelyett h sajatokat irnank. de van olyan h sajatot kell irni? termeszetesen van, ha a standardek egyike sem nyujtja azt ami kell nekunk, pl. ha olyan predicate kell ami harom paramot vesz at v ami checked exct dob. de van olyan is h meg kell irnunk a sajat functional ifaceunket akkor is ha a standardek egyike structurally identical
+
+pl. Comparator<T> structurally identical ToIntBiFunction<T,T>. meg ha az utobbi letezett is volna amikor az elobbit irtak akkor sem lett volna jo azt haszn. szamos ok van amiert a Comparator sajat ifacet erdemel. eloszor, a neve kivaloan docol amikor egy APIban van haszn, es sokban van haszn. masodszor, a Comparator ifacenek eros requirementjei vannak arra h "what constitutes a valid instance", ez a general contractja. ha impljuk az ifacet akkor vallaljuk h betartjuk a contractot. harmadszor, vannak benne hasznos default metodusok a comparatorok transformalasara/kombinalasara
+
+meg kell fontolnunk h sajat funcgtional ifacet irjunk standard haszn helyett ha olyanra van szuksegunk, amelyre a Comparatorhoz hasonloan jell:
+- commonly used lesz, es elony ha beszedes neve van
+- eros contractja van
+- profitalni tud custom default metodusokbol
+
+ha ugy dontunk h sajat functional ifacet irunk akkor emlekezzunk ra h ez egy iface es ezert gondosan kell megdesignolni (item 21)
+
+vegyuk eszre h a fenti EldestEntryRemovalFunction ifacen @FunctionalInterface anno van. ez hasonlit az @Override annohoz. a prgozo szandekanak stmtje aminek celjai: docolja a class userei szamara h az ifacet aert designoltak h lambdakat enableljen; megakadalyozza h az iface leforduljon ha nem pontosan egy abstract metodus van benne; preventalja h a maintainerek veletlenul tovabbi ifaceket adjanak hozza az evolvalodas soran. mindig haszn ezt az annot a functional ifaceinken
+
+functional ifacek haszn APIkban. ne nyujtsunk metodust tobb overloadinggal amelyek kulonbozo functional ifaceket vesznek at uabban az arg pozicioban, amennyiben ez a clientekben ambiguityt okozhat. ez nem csak elmeleti problema; ExecutorService submit() metodusa atvehet Callable<T> v Runnable is, es lehet olyan clientet irni ami castolast igenyel a megfelelo overloading jelzesehez (item 52). ez egy spec esete item 52 tanacsanak: "use overloading judiciously."
+
+summary: most h vannak a Javaban lambdak, fontos h az APIkat erre figyelve designoljuk . vegyunk at functional iface typeokat inputkent es returnoljuk outputkent.  alt legjobb a java.util.function altal nyujtott standard ifaceket haszn, de figy azokra a ritkabb esetekre ahol jobb ha sajatot irunk

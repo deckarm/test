@@ -1,0 +1,29 @@
+ITEM 43: PREFER METHOD REFERENCES TO LAMBDAS
+
+lambdak fo elonye anon classokkal szemben h tomorebbek. de van meg a lamdbaknal is tomorebb mod a function objk generalasara: metodus refek. peldaprg ami arbitrary keyek es Integer valuek mapjet maintaineli. ha a value "a count of the number of instances of the key" akkor a prg egy multiset impl. a kod celja h 1-et rendeljen a keyhez ha az meg nincs a mapben, ill novelje a valuet ha mar benne van
+map.merge(key, 1, (count,incr) -> count + incr);
+merge() metodust haszn ami Java 8-ban kerult a Map ifacebe. ha a megadott adott keyhez nincs mapping, akkor a metodus beinserteli a megadott valuet; ha mar van mapping akkor a merge() a megadott functiont applyolja a jelenlegi es a megadott valuekra, es overwritolja a jelenlegi valuet a resulttal
+
+ez jol olvashato kod, de van benne egy kis boilerplate. a count es az incr paramok nem tesznek tul sokat hozza, viszont helyet foglalnak. valojaban a lambda csak annyit mond h a function a ket argjanak az osszeget returnoli. Java 8-tol az Integer (es a tobbi boxed numeric primitiv type) nyujt egy static sum() metodust ami pontosan ezt csinalja. atadhatunk egy refet erre a metodusra es uezt az eredmenyt kapjuk kevesebb szoveggel
+map.merge(key, 1, Integer::sum);
+
+minel tobb paramja van egy metodusnak, annal tobb boilerplatet tudunk elim metodus reffel. egyes lamdbakban azonban a paramok nevei hasznos docot nyujtanak, ezaltal a lambda olvashatobb/maint++ mint a metodus ref, meg ha hosszabb is
+
+metodus ref semmi olyat nem tud amit a lamdba nem (egyetlen nem jelentos kivetel, ld. JLS). metodus refek alt rovidebb, tisztabb kodot nyujtanak. kiutat jelenthetnek ha egy lambda tul hosszu v komplex lesz: a lambdaban levo kodot extractolhatjuk egy uj metodusba es a lambda helyett haszn egy refet arra a metodusra. adjunk a metodusnak jo nevet es docoljuk le
+
+ha IDEt haszn, tip felajanlja hogy lecsereli a lambdat metodus refre ahol tudja. alt, de nem mindig erdemes elfogadni. neha egy lambda meg tomorebb is lehet mint egy metodus ref. ez leggyakrabban akkor van ha a metodus uabban a classban van mint a lamdba. pl. ha az alabbi kodreszlet a GoshThisClassNameIsHumongous nevu classban van
+service.excute(GoshThisClassNameIsHumongous::action);
+annak a lambda ekvivalense
+service.execute(()->action());
+a metodus refet haszn kod se nem rovidebb, se nem tisztabb mint a lambdat haszn, ezert az utobbi jobb. hasonlo eset: a Function iface nyujt egy generic static factory metodust ami identity functiont returnol: Function.identity(). alt rovidebb es tisztabb ha nem ezt haszn, hanem inline lekodoljuk a lambda ekvt: x -> x;
+
+szamos metodus ref static metodusokra ref, de van negy aleset ami nem. ezek kozul ketto a bound es az unbound instance metodus refek. bound refeknel a receiving obj van spec a metodus refben. bound refek hasonloak a static refekhez: a function obj uazokat az argokat kapja mint a refelt metodus. unbound refeknel a receiving obj akkor van spec amikor a function obj applyolva van, egy plusz paramban a metodus dekl paramjai elott. unbound refeket gyakra haszn mapping es filter funckent stream pipelineokban (item 45). ezenkivul van ketfajta konstr ref, classokra es arrayekre. konstr referk factory objkent szolgalnak
+
+ofogl tabla (metodus ref type: pelda @@@ lambda ekv)
+static: Integer::parseInt @@@ str->Integer.parseInt(str)
+bound: Instant.now()::isAfter @@@ Instant then = Instant.now(); t -> then.isAfter(t)
+unbound: String::toLowerCase @@@ str -> str.toLowerCase()
+class constructor: TreeMap<K,V>::new @@@ () -> new TreeMap<K,V>
+array constructor: int[]::new @@@ len -> new int[len]
+
+summary: metodus refek a lambdak egy tomorebb alternativai. ahol a metodus refek rovidebbek es tisztabbak ott haszn; egyebkent maradjunk a lambdaknal
