@@ -1,0 +1,60 @@
+ITEM 47: PREFER COLLECTION TO STREAM AS A RETURN TYPE
+
+szamos metodus elementek seqjet returnoli. Java 8 elott az ilyen metodusok nyilvanvalo return typejai a coll ifacek voltak, Collection, Set es List; vmint az Iterable; es az array typeok. alt konnyu volt eldonteni h ezek kozul melyik. tip vmelyik coll iface volt. ha a metodus csak azert letezett h for-each loopokat enableljen v a returnolt seqt nem lehetett ravenni h vmi Collection metodust impljon (tip contains(Object)), akkor Iterable. ha a returnolt valuek primitivek voltak v szigoru perf requirementek voltak, akkor arrayek. Java 8-ban bejottek a streamek, ezzel megnehezult a seq-returning metodusok megfelelo return typejanak kivalasztasa
+
+lehet h hallottunk mar olyat h mostantol a streamek a jo valasztas element seqk returnolesere, de amint item 45 mondta, streamek nem teszik az iterationt obsolette: a jo kod a streamek es az iteration megfelelo kombojabol all. ha egy API csak streamet returnol, de egyes userek iteralni akarnak a returnolt seqen for-each looppal, akkor jogosan lesznek mergesek. kulonosen frusztralo azert mert a Stream iface egyebkent tart az Iterable iface egyetlen sbstract metodusat, es a Stream specje erre a metodusra kompat az Iterable-eval. de mivel a Stream nem extendalja Iterablet ezert nem lehet streamen for-each looppal iteralni
+
+sajnos erre nincs jo workaround. elsore ugy tunhet h ha egy metodus refet adunk at a Stream iterator() metodusanak, az muk. a kod kicsit terjengos es opaque (homalyos) de elfogadhato lenne
+for(ProcessHandle ph:Processhandle.allProcesses()::iterator) { ... }
+de sajnos ez nem fordul le: "error: method reference not expected here"
+
+ahhoz h leforduljon, a metodus refet a megfelelo parametrized Iterableve kell castolni
+for(ProcessHandle ph:(Iterable<ProcessHandle>)Processhandle.allProcesses()::iterator) { ... }
+ez a client kod muk, de gyak hasznalatra terjengos es opaque
+
+jobb workaround ha adapter meztodust haszn. JDK nem nyujt ilyen metodust, de konnyen tudunk irni, a fenti snippetekben is haszn techn segitsegevel. vegyuk eszre h nincs castolasra szukseg mivel a Java type inference ebben a ctxben jol muk
+public static <E> Iterable<E> iterableOf(Stream<E> stream) { return stream::iterator; }
+ezzel az adapterrel bmely streamen tudunk iteralni for-each looppal
+for(ProcessHandle p:iterableOf(ProcessHandle.allProcesses())) { ... } 
+
+vegyuk eszre h az Anagram prg streames verzio item 34-ben a Files.lines() metodust haszn a dictionary kiolvasashoz, mig az iterativ verzio scannert haszn. a Files.lines() jobb mint a scanner ami csendben elnyeli a file olvasas soran dobott excket. idealis esetben az iterativ verzioban is Files.lines()-t kellene haszn. ez az a fajta kompromiiszum amit a prgozok megkotnek ha egy API egy seqhez csak stream accesst nyujt, de ok for-eachel akarnak iteralni a seqen
+
+forditott iranyban, egy prgozo aki stream pipelineal akar feldolg egy seqt, joggal lesz merges ha egy API csak Iterablet nyujt. JDK itt sem nyujt adaptert, de konnyu irni
+public static <E> Stream<E> streamOf(Iterable<E> iterable) { return StreamSupport.stream(iterable.spliterator(), false);
+
+ha olyan metodust irunk amely objk seqjet returnoli es tudjuk h csak stream pipelineban lesz haszn, akkor termeszetesen nyugodtan returnolhetunk streamet. hasonloan ha egy metodus olyan seqt returnol amely csak iterationban lesz haszn, az returnoljon Iterablet. de ha public APIt irunk ami seqt returnol akkor gondoskodunk kell az olyan userekrol is akik stream pipelineokat akarnak haszn, es azokrol is akik for-eacheket akarnak irni; hacsak nincs okunk azt felt h vmennyi user csak ezek egyiket akarja haszn
+
+a Collection iface az Iterable subtypeja es van egy stream() metodusa, tehat iterationra es stream accessre is lehetoseget nyujt. ezert a Collection v vmelyik subtypeja alt a legjobb return type egy public seq-returning metodushoz. arryek szinten jo iteration es stream accesst nyujtanak az Arrays.asList() es a Strem.of() metodusokkal. ha a returnolt seq eleg kicsi h membe beferjen, akkor legjobb ha a standard coll implk vmelyiket returnoljuk, pl. ArrayList v HashSet. de nagy seqet ne taroljunk memben, csak returnoljuk collkent
+
+ha a seq amit returnolunk nagy, de tomoren reprhato, akkor fontoljuk meg h spec-celu collt impl. pl. egy set un power setjet akarjuk returnolni, ami az osszes subsetet tart. {a,b,c} power setje tehat {{}, {a}, {b}, {c}, {a, b}, {a, c}, {b, c}, {a, b, c}}. ha egy setben n element van akkor a power setjeben 2^n. ezert ne akarjuk a power setet egy standard coll implban tarolni. de konnyen tudunk egy custom collt impl erre a celra az AbstractList segitsegevel
+
+a trukk h a power set minden elementjenek indexet bit vectorkent haszn, ahol az index n-dik bitje az n-dik element jelenletet v hianyat jelzi a src setben. lenyegeben egy natural mapping van a 0 es 2^n-1 kozti binaris szamok es egy n-elementu set power setje kozott
+public class PowerSet {
+  public static final <E> Collection<Set<E>> of(Set<E> s) {
+    List<E> src = new ArrayList<>(s);
+	if(src.size() > 0) throw new IllegalArgumentException("set too big");
+	return new AbstractList<Set<E>>() {
+      //override size(), contains(), get()
+	  
+vegyuk eszre h PowerSet.of() exct dob ha az input setben tobb mint 30 element van. ez egy hatranya ha Collection a return type es nem Stream v Iterable: Collectionnek egy intet returnolo size() metodusa van ami a returned seq hosszat Integer.MAX_VALUE-ra, 2^31-1-re limitalja. a Collection spec megengedi h a size() 2^31-1-et returnoljon ha a coll nagyobb v akar infinite, de ez nem kiel mo
+
+ahhoz h az AbstractCollection tetejere irjunk Collection implt, csak ket metodust kell impl az Iterable-on kivul: contains() es size(). gyakran konnyu hatekony implt adni ezekre a metodusokra. ha ez nem feasible, mert pl. a seq contentje nem prederminalt az iteration elott, akkor returnoljunk stremet v iterablet, ami jobbnak tunik. returnolhetjuk mindkettot is ket kulon metodust hasz
+
+vannak esetek amikor a return typeot kizarolag az impl egyszerusege alapjan val ki. pl. tfh olyan metodust akarunk irni ami egy input list minden folyamatos sublistjet returnoli. mindossze 3 sor kod ezeket a sublisteket legeneralni es berakni oket egy standard collba, de a coll tarolasahoz szuks mem a src list sizeban quadratic. ez nem olyan rossz mint a power setnel, ahol exponential, de megsem elfogadhato. custom collt impl mint power setnel, korulmenyes, mivel a JDK-ban nincs skeletal Iterator impl ami segithetne nekunk
+
+ugyanakkor straightfwd modon lehet egy input list minden sublistjet tart streamet impl. nevezzunk egy sublistet ami tart a list elso elementjet, a list prefixenek. pl. (a,b,c) prefixei (a), (a,b) es (a,b,c). hasonloan hivjuk a list utolso elementjet tart sublistjet suffixnak, tehat (a,b,c) suffixei (a,b,c), (b,c) es (c). vegyuk eszre h egy list sublistjei a prefixek suffixei (maskent: a suffixek prefixei). ez alapjan egy viszonylag tiszta es tomor impl
+public class SubLists {
+  public static <E> Stream<List<E>> of(List<E> list) { return Stream.concat(Stream.of(Collections.emptyList()), prefixes(list).flatMap(SubLists::suffixes));
+  private static <E> Stream<List<E>> prefixes(List<E> list) { return IntStream.rangeClosed(1, list.size()).mapToObj(end -> list.sublist(0, end));
+  private static <E> Stream<List<E>> suffixes(List<E> list) { return IntStream.rangeClosed(0, list.size()).mapToObj(start -> list.sublist(start, list.size()));
+
+a Stream.concat() metodussal adjuk hozza az empty listet a returned streamhez. a flatMap() metodus (item 45) haszn arra h egyetlen streamet generaljunk ami az osszes prefix osszes suffixet tart. a prefixeket es suffixeket pedig az IntStream.range() es IntStream.rangeClosed() altal returnolt folyamatos int stream mappelesebol generaljuk. ez az idiom nagyjabol az integer indexeken valo standard for-loop stream ekvivalense. igy a sublist implnk hasonlo a klasszikus nested for-loophoz:
+for(int start = 0; start < src.size(); start++) for(int end = start + 1; end <= src.size(); end++) sout(src.subList(start.end));
+
+ezt a for-loopot direktben is at lehet streamme forditani. az eredmeny tomorebb mint az elozo impl, de talan kevesbe olvashato. hasonlo mint az item 45 Descartes szorzat stream kod
+public static<E> Stream<List<E>> of(List<E> list) { return IntStream.range(0, list.size()).mapToObj(start -> IntStream.rangeClosed(start + 1, list.size()).mapToObj(end -> list.subList(start, end))).flatMap(x->x);
+mint a for-loopos valtozatnal, ez a kod sem adja vissza az empty listet. ezt fixalando hasznalhatunk concat()-ot, v 1 helyett (int)Math.signum(start) a rangeClosed() hivasban
+
+bmelyik fenti streames impl jo a sublistekre, de mindkettohoz kell vmi Stream-to-Iterable adapter ha olyan helyeken akarjuk haszn ahol az iteration jobb lenne. ez clutter++ es perf--, szerzo gepen 2.3x-os lassulas. egy Collection cel-impl (itt nincs bemutatva) lenyegesen verbose++, de szerzo gepen 1.4x gyorsabb mint a stream-based impl
+
+summary: ha olyan metodust irunk ami elementek seqjet returnoli, emlekezzunk ra h a felhasznalok egy resze lehet h streamkent akarja ezeket processalni, mas reszuk viszont iteralni akar rajtuk. probaljuk mindket csoportot kiszolgalni. ha feasible collt returnolni, akkor tegyuk, ha az elementjeink mar egy collban vannak v a seqben levo elementek szama eleg kicsi ahhoz h egy ujat kreljunk, akkor returnoljunk standard collt mint ArrayList. egeybkent fontoljuk meg h custom collt impl mint a power setnl. ha nem feasible collt returnolni, akkor returnoljunk streamet v iterablet, amelyik jobbnak tunik. ha egy kesobbi Java relben a Stream ifacet modifolnak h extendalja Iterablet, akkor onnantol lehet majd streamet returnolni mivel lehetove fogja tenni a stream processinget es az iteralast is
