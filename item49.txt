@@ -1,0 +1,33 @@
+ITEM 49: CHECK PARAMETERS FOR VALIDITY
+
+a legtobb metodusnak es konstrnak van vmi restrictionje arra h milyen valuekat lehet atadni nekik paramkent. pl. nem ritka h az index valueknak nemnegativnak kell lennie, obj refeknek pedig non-nullnak. az ilyen restrictionokat docolni kell, a metodus body elejen pedig csekkekkel enforcolni. ez egy spec esete annak a general principlenek h meg kell probalni az errorokat a leheto leghamarabb detektalni. ha nem igy teszunk az noveli a vget h az error nem lesz detektalva, ill ha megis, akkor neheziti az error src meghatarozasat
+
+ha egy metodusnak invalid paramot adunk at, es a metodust csekkeli ezt meg az execeles elott, akkor gyorsan es tisztan fog failelni, megfelelo exct dobva. ha a metodus nem csekkeli a paramjait akkor tobb dolog tortenhet. a metodus failelhet vmi confusing exc dobasaval a processing kozepen. ennel rosszabb ha a metodus normal modon returnol de rossz eredmenyt szamol ki. legrosszabb ha a metodus normal modon returnol, de vmi objt inkorrekt stateben hagy, ami pedig a jovoben vmikor, a kod vmi unrelated pontjan fog vmi errort okozni. mas szavakkal ha nem validaljuk a paramokat, azzal violalhatjuk a failure atomicityt (item 76)
+
+public es protected metodusokra haszn a Javadoc @throws tagjet h docoljuk az exct ami dobva lesz ha egy param restriction violalodik (item 74). tip az exc IllegalArgumentException, IndexOutOfBoundsException v NPE lesz (item 72). ha ledocoltuk egy metodus paramjaira von restrictionokat, es az exckat amik akkor lesznek dobva ha a restrictionok violalodnak, akkor onnantol mar egyszeru enforcolni a restrictionokat
+/* ... @param m the modulus, which must be positive @return this mod m @throws ArithmeticException if m is less than or equal to 0 */
+public BigInteger mod(BigInteger m) { if(m.signum() <= 0) throw new ArithmeticException("Modulus <= 0: " + m);
+
+a doc nem mondja h "mod throws NullPointerException if m is null" pedig valojaban ez tortenik, az m.signum() invokolas mellekhatasakent. ez az exc az enclosing BigInteger class docjaban van leirva. a class-level comment minden paramra von a class osszes public metodusaban. ez egy jo mod elkerulni h minden NPEt minden metodusban kulon docljunk. ez kombinalhato a @Nullable v hasonlo anno hasznalataval annak jelzesere h egy adott param lehet null, de ez nem standard, es tobb annot is haszn erre a celra
+
+a Java 7-be hozzaadott Objects.requireNonNull() metodus flex es kenyelmes, mar nem kell manualis null csekkeleseket csinalni. megadhatjuk a sajat exc detail msgunket is ha akarunk. a metodus az inputjat returnoli, tehat a value felhaszn egyidoben hajthatjuk vegre a null csekkelest
+this.strategy = Objects.requireNonNull(strategy, "strategy must be not null");
+tereszetesen ignoralhatjuk is a return valuet es haszn az Objects.requireNonNull()-t onallo null csekkeleskent
+
+Java 9-ben egy range-checking facilityt adtak java.util.Objects-hez. harom metodusbol all: checkFromIndexSize(), checkFromToIndex(), checkIndex(). ez nem olyan flex mint a null csekkelo metodus. nem tudjuk megadni a sajat exc detail msgunket, es csak list es array indexeken lehet haszn. nem kezel closed rangeket (amelyek mindket endpointot tart). de ha pont erre van szuksegunk, akkor hasznos lehet
+
+nem exportalt metodusoknal, mi, azaz a package authorjai kontrollaljuk h milyen korulm kozott hivhato a metodus, tehat nekunk kell bizt h csak valid param valuek legyenek atadva. ezert a nonpublic metodusok csekkelhetik a paramjaikat assertionokkal
+private static void sort(long a[], int offset, int length) { assert a!= null; ...
+lenyegeben ezek az assertionok claimek arra nezve h az assertalt condition true lesz, fgtl h az enclosing packaget a clientek hogyan haszn. normal validity csekkektol elteroen assertionok AssertionErrort dobnak ha failelnek. es nornal validity csekkektol elteroen nincs hatasuk es lenyegeben nincs ktguk ha nem enableljuk oket, amit a java command -ea (v -enableassertions) flagjevel tehetunk meg
+
+kulonosen fontos azoknak a paramoknak a validityjet csekkelni amelyeket egy metodus nem haszn, hanem eltarol kesobbi hasznalatra. pl. korabban latott static factory metodus ami egy int arrayt vesz at es az array egy List viewjat returnoli. ha a client nullt adna at neki, akkor a metodus NPEt dobna mert explicit csekk van benne (az Objects.requireNonNull() hivas). ha nem lenne ez a csekk akkor a metodus egy refet retunrolne egy ujonnan krealt List instancera, ami NPEt dobna mihelyt egy client megprobalna haszn. azon a ponton a List instance originjet mar nehez megallapitani, ami jelentosen neheziti a debuggolast
+
+konstrk egy spec esetet jelentik a principlenek h csekkelnunk kell a kesobbi hasznra eltarolt paramok validityjet. konstr paramok validityjet csekkelni kritikus, h preventaljuk olyan obj krealasat ami violalja a class invarjait
+
+vannak kivetelek, ahol nem kell expl csekkelni a metodus paramjait a computation elott. egy fontos kivetel ahol a validity csekk draga v impractical lenne ES a csekk a computation soran implicit vegrahajtodik. pl. egy metodus ami objk listjat sortolja, mint Collections.sort(List). a listben levo osszes objnak mutually comparable kell lennie. a list sortolas soran minden obj komparalva lesz vmelyik masik objhoz a listben. ha ezek az objk nem mutually comparablek, akkor ezen komparalasok vmelyike ClassCastExceptiont fog dobni, ami pont az amit a sort() metodusnak tennie kell. ezert nyilvan nem sok ertelme lenne elore lecsekkelni h a list elementek mind mutually comparablek. de figyeljunk arra h ha kritikatlanul megbizunk az implicit validity csekkekben, az vezethet a failure atomicity (item 76) elvesztesehez
+
+neha egy computation implicit vegrahajtja a kivant validity csekket de fail eseten rossz exct dob. maskent, az exc amit a computation naturally dobna egy invalid param value miatt, nem uaz az exc amit a metodus a doc szerint dobna. ilyenkor az exc translation idiomot lehet haszn (item 73), leforditva a natural exct a jora
+
+ne azt szurjuk le ebbol az itembol h az arbitrary param retriction jo dolog. ellenkezoleg, designoljuk a metodusokat annyira generalra "as it is practical to make them". minel kevesebb restriction van a paramokra, annal jobb, felt h a metodus vmi ertelmeset tud csinalni az elfogadott param valuekkal. de gyakran "some restrictions are intrinsic to the abstraction being implemented"
+
+summary: mikor metodust v konstrt irunk, gondoljuk at h milyen restrictionok vannak a paramjaira. ezeket docoljuk le, es enforcoljuk explicit csekkekkel a metodus body elejen. fontos h ezt megszokjuk. a kis munka amibe ez kerul, megterul az elso alkalommal amikor egy validity csekk failel
