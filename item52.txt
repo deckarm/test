@@ -1,0 +1,63 @@
+ITEM 52: USE OVERLOADING JUDICIOUSLY
+
+az alabbi prg egy kiserlet a collok classifyolasara (set, list v vmi mas)
+public class CollectionClassifier {
+  public static String classify(Set<?> s) { return "Set";
+  public static String classify(List<?> l) { return "List";
+  public static String classify(Collection<?> c) { return "Unknown collection";
+  main() {
+    Collection<?>[] collections = { new HashSet<String>(), new ArrayList<BigInteger>(), new HashMap<String,String>().values() };
+	for(Collection<?> c: collections) sout(classify(c));
+	
+azt varnank h "Set, List, Unknown Collection" lesz a kiiras, de nem. "Unknown Collection" lesz kiirva haromszor. mivel a classify() metodus overloadolva van, es h mely overloading lesz invokolva, az compile timeban dol el. a loop mindharom iterjeben a param compile-time typeja uaz: Collection<?>. a runtime type mindharom iterben mas lesz, de ez az overloading valasztast nem bef. mivel a param compile-time typeja Collection<?>, az egyetlen applicable overloading a harmadik, a classify(Collection<?>), es ez lesz a loop mindharom iterjeben invokolva
+
+ez a muk counterinitiative, mert az overloading metodusok kozti valasztas static, mig az overriden metodusok kozti valasztas dynamic. egy overriden metodus megfelelo verzioja runtimeban val ki, az obj runtime typeja szerint, amin a metodus invokolodik. emlekeztetoul, metodus akkor overridden, ha egy subclass tart egy metodus deklt uazzal a signatureal mint az ancestorban.  ha egy instance metodus overridolva van egy subclassban, es ezt a metodust a subclass egy instancean invokoljuk, a subclass overriding metodusa fog lefutni, fgtl a subclass instance compile-time typejatol
+class Wine { String name() { return "wine";
+class SparklingWine extends Wine { String name() { return "sparkling wine";
+class Champagne extends SparklingWine { String name() { return "champagne";
+public class Overriding { main() { List<Wine> wineList = List.of(new Wine(), new SparklingWine(), new Champagne()); for(Wine wine:wineList) sout(wine.name());
+
+a name() metodus a Wine classban van dekl, es a SparklingWine es Champagne subclassokban overridolva. a kiiras "wine, sparkling wine, champagne", bar az instance compile-time typeja a loop minden iterjeben Wine. egy obj compile-time typejanak nincs hatasa arra h melyik metodus fog lefutni amikor egy overriden metodus invokolodik; mindig a "most specific" overriding metodus fog lefutni. vs overloading, ahol az obj runtime typejanak nincs hatasa arra h melyik overloading fog lefutni; a val compile timeban tortenik, kizarolag a paramok compile-time typejan alapulva
+
+a CollectionClassifier peldaban a prg celja az volt, h megallapitsa a param typejat, azaltal h autom dispatcholna a megfelelo metodus overloadingnek a param runtime typeja alapjan, csakugy ahogy a name() metodus csinalja a Wine peldaban. de a metodus overloading nem nyujtja ezt. a fixalas legjobb modja a classify() harom overloadingjat egyetlen metodussal helyettesitjuk ami explicit instanceof csekkeleseket csinal
+public static String classify(Collection<?> c) { return c instanceof Set ? "Set" : c instanceof List ? "List" : "unknown Collection";
+
+mivel az overriding a normalis es overloading a kivetel, az emberek az overridingnel megszokott behavra szamitanak. mint a CollectionClassifier pelda mutatta, az overloadingnal ezek a varakozasok nem megalapozottak. nem jo practice olyan kodot irni amelynek a behavja osszezavarhatja a prgozokat. ez kulonosen igaz az APIkra. ha egy API tip usere nem tudja h tobb metodus overloading kozul melyik fog invokolodni paramok egy adott setje mellett, akkor az API haszn valszeg hibakhoz fog vezetni. ezek a hibak valszeg furcsa runtime mukodesben fognak megnyilv, es nehez lesz diagn oket. ezert az overloading confusing hasznalata elkerulendo
+
+az h pontosan mit jelent az "overloading confusing hasznalata", vita targya. safe, konzervativ policy szerint sose exportaljunk ket overloadingot azonos szamu parammal. ha egy metodusnak varargja van, akkor konzerv policy szerint ne overloadoljuk, kiveve item 53 szerint. ha ezeket a restrictionoket betartjuk, prgozokban sosem lesz ketely h paramok egy setjere mely overloading fog lefutni. ezek a restrictionok nem nagyon sulyosak, mivel overloading helyett bmikor adhatunk a metodusoknak kulonbozo neveket is
+
+pl. ObjectOutputStream classnak minden primitive typera es szamos ref typera van write metodusa. de nem a write() metodu van overloadolva, hanem mindegyik metodusnak mas neve van, writeBoolean(boolean), writeInt(int), writeLong(long) stb. ennek a naming patternnek tovabbi benefitje az overloadinggal szemben h tudunk read metodusokat nyujtani megfelelo nevekkel, pl. readBoolean(), readInt(), readLong(). az ObjectInputStream egyebkent nyujtja is ezeket a read metodusokat
+
+konstrk esteben nincs lehetoseg mas nevet haszn: egy class tobb konstra mindig overloadingot jelent. szamos esetben van lehetoseg konstr helyett static factoryt exportolni (item 1). konstrnal nem kell aggodni az overloading es overriding kozti interaction miatt aggodni, mivel konstr nem overridolhato. valszeg lesz olyan h tobb konstrt kell azonos szamu parammal exportolnunk, ugy h jo ha tudjuk hogyan kell helyesen
+
+tobb overloadingot azonos szamu parammal exportalva nem fogja osszezavarni a prgozokat, ha mindig tiszta h paramok egy adott setjere mely overloading fog lefutni. ez akkor van ha minden overloading parban legalabb egy formal param typeja "radically different" a ket overloadingban. ket type radically different ha nem lehetseges bmely non-null expressiont mindket typera lecastolni. ilyen korulmenyek kozott az, h mely overloading fog lefutni paramok egy adott setjere, kizarolag a paramok runtime typejai alapjan fog meghatarozodni, a compile-time typeok nem bef, igy a confusion forrasa kikusz. pl. ArrayListnek van egy konstr, ami intet vesz at es egy masik ami Collectiont. nem igazan kepzelheto el olyan helyzet ahol ne lenne nyilvanvalo h a ketto kozul melyik fog invokolodni
+
+Java 5 elott minden primitiv type radically different volt minden ref typetol, de autoboxing ota ez mar nem igaz, es ez gondokat okozott
+Set <Integer> set = new TreeSet<>(); List<Integer> list = new ArrayList<>();
+for(int i = -3; i < 3; i++) { set.add(i); list.add(i); }
+for(int i = 0; i < 3; i++) { set.remove(i); list.remove(i); }
+eloszor -3-tol 2-ig inclusive hozzaadja az inteket egy sorted sethez es listhez. aztan csinal harom identical remove() hivast a seten es a listen. arra szamitanank h a nemneg valuekat (0,1,2) tavolitja el a setbol es a listbol, es [-3, -2, -1] [-3, -2, -1] marad. valojaban csak a setbol tavolitja el a nemneg valuekat, a listbol pedig a paratlan valuekat, es [-3, -2, -1] [-2, 0, 2] marad. ez meglehetosen zavaro
+
+ami tortenik: a set.remove(i) hivas a remove(E) overloadingot val, ahol E a set element typeja (Integer), es autoboxolja az i paramot intbol Integerbe. ez az elvart behav, tehat a setbol a nemneg ertekeket fogja eltav. a list.remove(i) hivas viszont a remove(int) overloadingot val, amely a paramkent megadott _pozicioban_ levo elementet fogja eltav. [-3, -2, -1, 0, 1, 2] listbol indulva, es a 0.,1. es 2. elementet eltav, [-2, 0, 2] fog maradni. a problema fixalasahoz a list.remove() argjat castoljuk Integerre, h ezaltal a helyes overloading legyen kival. v invokolhatjuk Integer.valueOf()-ot is az i paramon, es az eredmenyt adhatjuk at list.remove()-nak (azaz list.remove((Integer) i) v list.remove(Integer.valueOf(i))). az eredmeny mindket modon az elvart [-3, -2, -1] [-3, -2, -1] lesz
+
+ez a zavaro behav azert van mert a List<E> ifaceben a remove() metodusnak ket overloadingja van: remove(E) es remove(int). Java 5 elott, amikor a List ifacet generifyoltak, egy remove(object) metodus volt remove(E) helyett, es az Object es int param typeok radically differentek voltak. de a generics es autoboxing bejovetelevel a ket param type mar nem radically different. maskent, a generics es autoboxing hozzaadasa a nyelvhez karositotta a List ifacet. szerencsere keves Java lib API jart igy, de ebbol latszik h autoboxing es generics haszn eseten figyelni kell az overloadingra
+
+lambdak es metodus refek bejovetele Java 8-ban tovabb novelte az overloading zavarok lehetoseget
+new Thread(System.out::println).start();
+ExecutorService exec = Executors.newCachedThreadPool(); exec.submit(System.out::println);
+a Thread konstr invocation es a submit() metodus invocation hasonlonak tunik, de az elobbi lefordul az utobbi nem. az argok identicalok (System.out::println) es a konstrnak es a metodusnak is van egy overloadningja ami Runnablet vesz at. mi tortenik itt? a submit() metodusnak van egy overloadingja, ami Callable<T>-t vesz at, a Thread konstrnak viszont nincs. gondolhatnank h ez nem jelent gondot mert a println() minden overloadingja voidot returnol, ezert a metodus ref nem lehet Callable. ennek igy lenne ertelme, de az overload resolution algo nem igy muk. hasonloan meglepo lehet h a submit() invocation legal lenne, ha a println() metodus nem lenne overloadolva. a referenced metodus (println) es az invoked metodus (submit) overloadingjanak kombinacioja az ami preventalja h az overload resolution algo ugy viselkedjen ahogy varnank
+
+technically, a problema az h a System.out::println egy inexact metodus ref, es h "certain argument expressions that contain implicitly typed lambda expressions or inexact method references are ignored by the applicability tests, because their meaning cannot be determined until a target type is selected" JLS idezet, ne ijedjunk meg ha nem ertjuk, compiler keszitoknek irtak. a kulcspont h metodusok v konstr overloadolasa kul functional ifacekkel uabban az arg pozicioban zavart okozhat. ezert ne overloadoljunk metodusokat ugy h uabban az arg pozicioban kul functional ifaceket vegyenek at. az itteni terminologai szerint a kul functional ifacek nem radically differentek. a Java compiler warningot fog dobni az ilyen problemas overloadokra ha az -Xlint:overloads command line switchel inditjuk
+
+array typeok es az Objecten kivuli class typeok radically differentek. array typeok es Serializablen/Cloneablen kivuli iface typeok radically differentek. ket distict class unrelated ha egyik sem leszarmazottja a masiknak. pl. String es Throwable unrelatedek. egy obj nem lehet ket unrelated class instancea egyszerre, tehat az unrelated classok is radically differentek
+
+vannak tovebbi type parok, amelyek nem konvertalhatok egyik iranyban sem, de ha a fent leirt egyszeru eseteken tullepunk, akkor a legtobb prgozo szamara nagyon nehezze valik megallapitani h paramok egy setjere melyik overloading fog lefutni, ha egyaltalan le fog. az overloading kival szabalyok nagyon komplexek es minden releaseben egyre komplexebbek. keves prgozo erti az osszes reszletet
+
+lehet olyan eset h ugy erezzuk h meg akarju szegni az ebben az itemben leirtakat, fokent existing classok evolvalasa soran. pl. Stringben Java 4 ota van egy contentEquals(StringBuffer) metodus. Java 5-ben bejott CharSequence kozos ifacekent StringBuffer, StringBuilder, String, CharBuffer es egyeb hasonlo typeok szamara. uekkor a Stringbe bekerult egy contentEquals(CharSequence) overload
+
+ez egyertelmuen violalja az itt leirtakat, de nem okoz kart, mert mindket overloadolt metodus uazt csinalja ha uazon az obj refen vannak invokolva. prgozo lehet h nem tudja h melyik overloading lesz invokolva, de ez nem is erdekes, amig uugy viselkednek. standard mod ennek biztra ha a specifikusabb overload fwdol a generalnak
+public boolean contentEquals(StringBuffer sb) { return contentEquals((CharSequence) sb);
+
+Java libek tobbsegukben betartjak az itt irtakat, de van nehany class ami violalja. pl. String exportal ket overloaded static factory metodust, valueOf(char[]) es valueOf(Object), amelyek teljesen mast csinalnak ha uazt az obj refet kapjak. erre nincs magyarazat es komoly zavart okozhat
+
+summary: csak azert mert lehet metodusokat overloadolni, nem jelenti azt h kell is. alt legjobb ha nem overloadolunk metodusokat tobb azonos para szamu signatureal. biz esetekben, foleg konstrk eseteben nem lehetseges az itt leirtakat kovetni. ezekben az esetekben legalabb az olyan helyzeteket probaljuk elkerulni, ahol "the same set of parameters can be passed to different overloadings by the addition of casts". ha ez nem kerulheto el, pl. mert egy existing classt retrofittelunk h egy uj ifacet impljon, akkor bizt kell h minden overloading uugy viselkedjen ha uazokat a paramokat kapja. ha nem igy teszunk, akkor a prgozok nehezen fogjak tudni haszn az overloaded metodusokat v konstrkat, es nem fogjak erteni h miert nem muk 

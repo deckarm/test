@@ -1,0 +1,27 @@
+ITEM 54: RETURN EMPTY COLLECTIONS OR ARRAYS, NOT NULLS
+
+gyakran lehet hasonlo metodusokat latni. nullt returnol az empty coll jelzesere, ezt ne csinaljuk
+public List<Cheese> getCheeses() { return cheesesInStock.isEmpty() ? null : new ArrayList<>(cheesesInStock);
+
+nem indokolt h special casekent kezeljuk azt ha nincsen cheese. ha megis igy teszunk, akkor a clientbe extra kod kell, h kezelje a null return valuet
+List<Cheese> cheeses = shop.getCheeses(); if(cheeses != null && cheeses.contains(Cheese.STILTON)) sout(...);
+
+ez a fajta korulprgozas kell szinte minden esetben ha egy metodus empty coll v array helyett nullt returnol. ez error-prone mivel a clientet iro prgozo elfelejtheti a returnolt null lekezeleset. egy ilyen hiba akar evekig eszrevetlen maradhat mivel az iylen metodusok alt returnolnek 1 v tobb objt. vmint maganak a returnolo metodusnak az impljat is komplikalja
+
+neha vitatjak, h a null return jobb mint az empty coll v array, mivel megsporolja az empty container alloc ktget. ez ket okbol nem igaz. eloszor, ezen a szinten nem szukseges a perf miatt aggodni, hacsak meresek nem mutattak ki h a szobanforgo alloc tenylegesen perf problemakat okoz (item 67). masodszor, lehet empty collt v arrayt anelkul is returnolni h allocolnank oket
+public List<Cheese> getCheeses() { return new ArrayList<>(cheesesInStock);
+
+abban a nem valoszinu esetben ha bizonyitekunk van ra h empty coll alloc perf-- okoz, el tudjuk kerulni az allocot ha uazt az immut empty colt returnoljuk ismetelten, mivel az immut objk szabadon sharelhetoek (item 17). ehhez a Collections emptySet(), emptyList(), emptyMap() metodusokat lehet haszn. de ez optim, es ritkan van ra szukseg. ha ugy gondoljuk h szukseg van ra, akkor merjunk perfet elotte/utana
+public List<Cheese> getCheeses() { return cheesesInStock.isEmpty() ? Collections.emptyList() : new ArrayList<>(cheesesInStock);
+
+arrayekre uigy. sose returnoljunk nullt 0-hosszu array helyett. normal esetben a megfelelo meretu arrayt kell returnolni, ami lehet 0 is. a toArray() metodusnak egy 0-hosszu arrayt adunk at h jelezzuk a kivant return typeot, ami Cheese[]
+public Cheese[] getCheeses() { return cheesesInStock.toArray(new Cheese[0]);
+
+ha ugy gondoljuk h 0-hosszu array alloc perf--, akkor ismetelten returnolhetjuk uazt a 0-hosszu arrayt, mivel minden 0-hosszu array immut
+private static final Cheese[] EMPTY_CHEESE_ARRAY = new Cheese[0];
+public Cheese[] getCheeses() { return cheesesInStock.toArray(EMPTY_CHEESE_ARRAY);
+
+az optimizalt verzioban _uazt_ az empty arrayt adjuk at minden toArray() hivasnak, es ez az array lesz returnolve getCheese()-bol mindig ha a cheesesInStock ures. ne preallocoljuk a toArray()-nek atadott arrayt perf++ remenyeben, kimutattak h ez counterproductive
+return cheesesInStock.toArray(new Cheese[cheesesInStock.size()]); //ezt ne csinaljuk
+
+summary: sose returnoljunk empty array v coll helyett nullt. API nehezen haszn, es error-prone lesz, es nincsenek perf elonyei sem

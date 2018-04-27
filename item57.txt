@@ -1,0 +1,37 @@
+ITEM 57: MINIMIZE THE SCOPE OF LOCAL VARIABLES
+
+jellegeben hasonlo mint item 15, "Minimize the accessibility of classes and members". ha min a local varok scopejat, azzal nov a kod olvashatosagat es maintainabilityjet, es csokk az error vget
+
+regebbi prgnyelvekben mint C, kotelezo volt h a local varok a block headben legyenek dekl, es egyes prgozok ehhez vannak szokva. de ez nem jo szokas. Java lehetove teszi h a barhol dekl varokat ahol egy stmt legal
+
+local var scope minimalizalasra legjobb techn, ha ott dekl, ahol eloszor haszn. ha korabban dekl egy vart mielott haszn, az zavaro; mire haszn lesz, az olvaso lehet h mar nem emlekszik a typera v initial valuera
+
+ha tul koran dekl egy local vart, akkor nem csak tul koran kezdodhet a scopeja, de tul keson is fejezodhet be. egy local var scopeja a dekl ponttol tart az enclosing block vegeig. ha egy var azona  blockon kivul van dekl ahol haszn, akkor visible marad miutan a prg kilep a blockbol. ha egy vart veletlenul a szandekolt haszn regionja elott v utan haszn, az katasztrofa lehet
+
+szinte minden local var deklnak kell tart egy initializert. ha meg nincs eleg infonk h ertelmesen initeljunk egy vart, akkor postponoljuk a deklt amig lesz. ez alol egy kivetel a try-catch. ha egy var egy olyan exprra van initelve amelynek kiertekelese checked exct dobhat, akkor a vart a try blockon belul kell initelni (hacsak az enclosing metodus nem tudja propagalni az exct). ha a valuet a try blockon kivul is haszn kell, akkor a try block elott kell dekl, ott ahol meg nem lehet "ertelmesen" initelni (pelda ld...)
+
+loopoknal van egy spec lehetoseg a var scopeok minimalizalasara. for loop, traditional es foreach formaban is, lehetove teszi loop varok deklt, limitalva a scopejukat pontosan arra a regionra ahol szukseg van rajuk (loop bodyja vmint a for keyword es a body kozti zarojeles resz). ezert pref a for loopot a while looppal szemben, felteve h a loop var tartalma nem fog kelleni miutan a loop terminal
+for(Element e: c) { //do sg with e...
+
+ha accessalnunk kell az iteratort, pl. h meghivjuk a remove() metodusat, akkor pref a traditional for loopot a foreach looppal szemben
+for(Iterator<Element> i = c.iterator(); i.hasNext();) { Element e = i.next(); //do sg with e and i
+
+hogy lassuk ezek a for loopok miert pref while looppal szemben
+Iterator<Element> i = c.iterator(); while(i.hasNext()) { doSomething(i.next()); }
+Iterator<Element> i2 = c2.iterator(); while(i.hasNext()) { doSomething(i2.next()); }
+a masodik loopban copy-paste hiba van; uj loop vart initel (i2), de a regit haszn (i), ami sajnos meg mindig scopeban van. a kod lefordul, es exc dobas nelkul fut, de nem azt csinalja amit varunk: ahelyett h c2-n iteralna, a masodik loop azonnal terminal, mintha c2 ures lenne. mivel a hiba nem latszik, ezert hosszu ideig detektalatlan maradhat
+
+ha hasonlo copy-paste hibat vetenenk a for loopoknal, az le sem fordulna. az elso loopbeli element (v iterator) var nincs a masodik loop scopejaban
+for(Iterator<Element> i = c.iterator(); i.hasNext();) { Element e = i.next(); //do sg with e and i
+for(Iterator<Element> i2 = c2.iterator(); i.hasNext();) { Element e2 = i2.next(); //do sg with e2 and i2
+
+ezenkivul ha for loopot haszn, akkor kevesbe is vszinu h copy-paste hibat csinalunk mivel nincs ertelme kul var nevet haszn a ket loopban. a loopok egymastol fgtlk ezert lehet reusolni az element (v iterator) var nevet; sot gyakran ajanlott is
+
+for masik elonye a while-al szemben h rovidebb, es igy jobban olvashato
+
+egy masik loop idiom, ami csokk a local varok scopejat
+for(int i = 0, n = expensiveComputation(); i < n; i++) { //do sg with i
+vegyuk eszre h ket loop var van, i es n, es mindkettonek pont a megfelelo scopeja van. az n vart haszn az i var limitjenek tarolasara, elkerulve igy h minden iterben redundansan ki kelljen szamolni. haszn ezt az idiomot ha a loop csekkben egy olyan metodus invocation van, amely garantaltan uazt az eredmenyt returnolni minden iterben
+
+local var scope min techn az is, ha kicsi es focused metodusokat irunk. ha uabba a metodusba ket activityt is rakunk akkor a csak az egyik activityre relevans local varok benne lehetnek a masik activityt vegzo kod scopejaban is. ezt elkerulendo vagjuk a metodust kette az activityk menten
+

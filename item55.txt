@@ -1,0 +1,57 @@
+ITEM 55: RETURN OPTIONALS JUDICIOUSLY
+
+Java 8 elott ket approach volt ha olyan metodust irtunk ami biz korulm kozt nem tudott valuet returnolni. vagy exct dobtunk v nullt returnoltunk (felteve h a return type obj ref type volt). egyik approach sem perfect. exceknek kiveteles conditionokat kell jelezniuk (item 69), es az exc dobas ktges mivel exc krealasakor az egesz stack trace captured. null returnolesnel clientekbe special-case kod kell h kezeljek a null returnt, hacsak a prgozo nem teljesen biztos benne h a null return nem fordulhat elo. ha a client nem csekkeli a null returnt, es eltarolja a null return valuet vmi data structba akkor vmikor a jovoben vhol NPE lehet a kod egy teljesen unrelated pontjan
+
+Java 8-tol van egy harmadik approach olyan metodusokat irni, amelyek lehet h nem returnolnek valuet. az Optional<T> class egy immut containert repr, ami vagy egy non-null T reft tarol v semmit. egy semmit nem tart optionalra azt mondjuk h "empty". ha az optional nem empty, akkor a benne levo valuera azt mondjuk h "present". az optional lenyegeben egy immut coll ami max egy elementet tarthat. Optional<T> nem impl Collection<T>, de elvben megtehetne
+
+metodus ami conceptually T-t returnol, de lehez h biz korulm kozt nem teszi, deklhato ugy h return Optional<T>. ez lehetove teszi h a metodus empty resultot returnolhessen, ezzel jelezve h nem tud valid resultot returnolni. egy Optionalt returnolo metodus flexebb es konnyebb haszn mint egy olyan ami exct dob, es kevesbe error-prone mint ami nullt returnol
+
+item 30-ban lattuk azt a metodust, ami egy coll max valuejat szam ki, es exct dob ha a coll empty
+public static <E extends Comparable<E>> E max(Collection<E> c) { ...
+
+ott mar emlitettuk h Optional<E> return jobb alternativa
+public static <E extends Comparable> Optional<E> max(Collection<E> c) {
+  if(c.isEmpty()) return Optional.empty();
+  //result kiszam logika uaz
+  return Optional.of(result);
+
+csak meg kell krealnunk az optionalt a megfelelo static factoryval. ebben a prgban ket ilyet haszn: Optional.empty() empty optionalt returnol, Optional.of(value) pedig egy olyan optionalt returnol ami a megadott non-null valuet tart. prgozasi hiba nullt atadni Optional.of(value)-nak. ha ezt tesszuk, a metodus NPEt fog dobni. az Optional.ofNullable(value) metodus elfogad null valuet is, es empty optionalt returnol ha nullt adunk at neki. sose returnoljunk nullt egy Optionalt returnolo metodusbol: ezzel hazavagjuk a facility egesz celjat
+
+szamos stream terminal oper optionalt returnol. ha az elobbi max() metodust ugy irjuk meg h streamet haszn, a Stream max() operja elvegzi az optional krealast (bar ehhez egy explicit comparatort kell beadnunk neki)
+public static <E extends Comparable> Optional<E> max(Collection<E> c) { return c.stream().max(Comparator.naturalOrder());
+
+mi alapjan dontunk arrol h optionalt returnolunk es nem exct dobunk v nullt returnolunk? optionalok hasonloak a checked exckhoz (item 71) amennyiben is forcoljak h az API usere szembenezzen azzal h lehet h nem lesz returnolt value. unchecked exc dobas v null returnoles lehetove teszi a user szamara h ignoralja ezt, aminek komoly kovetk lehetnek. a checked exc dobas uakkor plusz boilerplate kodot jelent a clientben
+
+ha egy metodus optionalt returnol, a client ki tudja val, h mit tesz ha a metodus nem returnol valuet. megadhatunk default valuet
+String lastWordInLexicon = max(words).orElse("no words");
+v dobhatunk bmilyen megfelelo exct. vegyuk eszre h exc factoryt adunk be, es nem tenyleges exct. ezzel elkeruljuk az exc krealas ktget, hacsak nem lesz tenylegesen eldobva
+Toy myToy = max(toys).orElseThrow(SomeException::new);
+
+ha bizonyitani tudjuk h egy optional nonempty, akkor ki tudjuk gettelni a valuet az optionalbol anelkul h megadnank actiont arra az esetre ha az optional empty; de ha tevedunk, akkor a kod NoSuchElementExceptiont fog dobni
+Element lastNobleGas = max(Elements.NOBLE_GASES).get();
+
+neha kerulhetunk olyan helyzetbe ahol a default value gettelese ktges, es el akarjuk ezt a ktget kerulni hacsak nem szukseges. ezekre a helyzetekre Optional nyujt egy metodust ami egy Supplier<T> vesz at es csakkor invokolja azt ha szukseges. ennek a neve orElseGet(), de hivhatnak orElseCompute()-nek is mert kozeli rokona annak a harom Map metodusnak, amelyek nevei compute-vel kezdodnek. szamos Optional metodus is van, amelyek specebb use casekkel fogl: filter(), map(), flatMap() es ifPresent(). Java 9-ben ket uj ilyen metodus is bekerult: or() es ifPresentOrElse(). ha a fenti basic metodusok egyike sem jo a mi use caseunkre, akkor nezzuk meg ezeknek az advanced metodusoknak a docjat
+
+ha ezek egyike sem megfelelo, akkor Optional nyujtja az isPresent() metodust, ami safety szelepnek tekintheto. truet returnol ha az optional valuet tart, falseot ha empty. ezt tudjuk haszn "to perform any processing you like on an optional result" (?), de haszn okosan. isPresent() haszn helyett szamos esetben megfelel a fent emlitet metodusok vmelyike, az eredmeny kod pedig rovidebb, tisztabb es kozerthetobb
+pl. az alabbi kod egy process parentjenek IDjet irja ki, v N/A-t ha a processnek nincs parentje. ProcessHandle classt hasznal, ami Java 9
+Optional<ProcessHandle> parentProcess = ph.parent(); sout(parentProcess.isPresent() ? String.valueOf(parentProcess.get().pid()) : "N/A");
+uerre lehet az Optional map() metodusat haszn
+sout(ph.parent().map(h -> String.valueOf(h.pid())).orElse("N/A"));
+
+ha streameket haszn, nem ritkan fordul elo h van egy Stream<Optional<T>> es kell egy Stream<T> ami a nonempty optionalokban levo elementeket tart. Java 8-ban
+streamOfOptionals.filter(Optional::isPresent).map(Optional::get)
+
+Java 9-ben Optionalba kerult egy stream() metodus. ez egy adapter ami egy Optionalt Streambe fordit, amiben egy element lesz ha az optionalban van element, ill nem lesz benne element ha az optionalban nincs element. a Stream flatMap() metodusaval egyutt (item 45) ezt a metodust lehet a fenti snippet helyett haszn
+streamOfOptionals.flatMap(Optional::stream)
+
+nem minden return type benefitel az optionalokbol. container typeokat, azaz collokat, mapeket, streameket, arrayeket es optionalokat nem szabad optionalba wrappelni. empty Optional<List<T>> returnolese helyett egyszeruen returnoljunk empty List<T> (item 54). az empty container returnolesevel a clientnek nem kell optionalt processalnia. a ProcessHandle classban van egy arguments() metodus, ami Optional<String[]>-et returnol, de ez egy anomalia, nem kovetendo
+
+tehat mikor kell metodust ugy dekl h Optional<T> returnoljon T helyett? szabalykent, ha lehetseges h nem tud resultot returnolni, a clienteknek pedig spec processinget kell vegrehajtania ha nem returnol resultot. ezzel egyutt Optional<T> returnolesenek van ktge. Optional egy obj amit allocolni es initelni kell, value kiolv optionalbol pedig extra indirectiont igenyel. emiatt optionalok nem hasznalhatoak egyes perf krit szituaciokban. az h egy metodus ebbe a kategoriaba tart, csak alapos meresekkel allapithato meg (item 67)
+
+olyan optionalt returnolni, ami boxed primitiv typeot tart, kulonosen ktges egy sima primitiv returnolesehez kepest, mert ket boxingot is tart. ezert a lib designerek megkrealtak Optional<T> analogjait az int, long es double primitiv typeokra OptionalInt, OptionalLong es OptionalDouble neven. ezek tart az Optional<T> legtobb de nem minden metodusat. ezert sose returnoljunk boxed primitove type optionaljat, leszamitva esetleg a "minor primitive typeokat", Boolean, Byte, Character, Short es Float
+ 
+eddig arrol beszeltunk h optionalokat returnolunk es processaljuk oket a returnoles utan. mas hasznalatokrol nem beszeltunk, espedig azert mivel az optionalok mas hasznalata legalabbis gyanus. pl. sose haszn optionalokat map valuekent. ha megis, akkor egy key ket modon is "hianyozhat" a mapbol: tenyleg hianyzik v benne van de empty optionalra mappelodik. ez folosleges komplexitas, es zavart v errorokat okozhat. alt szinte sosem helyes optionalt keyket, valuekent v elementkent haszn collban v arrayben
+
+ez egy nagy kerdest megvalaszolatlanul hagy. lehet valaha helyes instance fieldben optionalt tarolni? ez gyakran code smell: arra utal h lehet h jobb lenne egy subclass ami az optional fieldeket tart. de neha jogos lehet. pl. item 2 NutritionFacts class. egy NutritionFacts instanceban szamos non-required field lehet. nem lehetseges h ezen fieldek minden kombojara kulon subclass legyen. ezenkivul a fieldek primitiv typeuak, ami nehezze teszi "express absence directly". a legjobb API minden optional field getterebol egy optionalt returnolne, ezert jo otlet ezeket az optionalokat az obj fieldjeikent tarolni
+
+summary: ha oyan metodust irunk ami nem tud mindig valuet returnolni, es ugy gondoljuk h fontos h a metodus userei foglalkozzanak ezzel a lehetoseggel minden alkalommal amikor meghivjak, akkor valszeg optionalt kellene returnolni. de figyelni kell arra h optional returnolesnek perf ktgei lehetnek; perf krit metodusoknal jobb lehet nullt returnolni v exct dobni. optionalt ritkan kell hasznalni barmi masra mint value returnolesre
