@@ -1,0 +1,33 @@
+ITEM 59: KNOW AND USE THE LIBRARIES
+
+tfh rnd integereket akarunk generalni 0 es vmi felso hatar kozt. sok prgozo erre ezt csinalna
+static Random rnd = new Random();
+static int random(int n) { return Math.abs(rnd.nextInt()) % n;
+
+ez jonak tunik, de harom flaw is van benne. az elso h ha n a 2-nek egy kicsi hatvanya, a rnd szamok seqje egy viszonylag rovid ido utan ismetlodni fog. a masodik, h ha n nem hatvanya 2-nek, akkor bizonyos szamok atlagban gyakrabban fognak kijonni mint masok. ha n nagy, ez a hatas nagyon hangsulyos lehet
+peldaprg ami egymillio rnd szamot general, es kiirja h ezek kozul mennyi esik a range also felebe: az eredmeny nem a vart 500e hanem 666666 korul lesz
+
+a harmadik flaw h neha elofordulhat katasztrofalis fail, amikor a megadott rangen kivuli szamot returnol. ez azert van mert a metodus a rnd.nextInt() altal returnolt valuet egy nemneg intre probalja mappelni a Math.abs()-al. ha nextInt() Integer.MIN_VALUE-t returnol, akkor Math.abs() is Integer.MIN_VALUE-t returnol, a % maradekoperator pedig neg szamot fog returnolni, felteve h n nem hatvanya 2-nek. ettol a prg szinte biztosan failelni fog, es a failure nehezen lesz reprodukalhato
+
+ahhoz h egy olyan random() metodust irjunk, ami kijavitja ezeket a flawkat, elvben tudnunk kellene egy csomo mindent a pseudornd generatorokrol, szamelmeletrol, 2-es komplementsrol stb. szerencsere ez nem szukseges, mert mar megcsinaltak helyettunk: Random.nextInt(int). muk reszletei nem erdekesek, eleg ha annyit tudunk h prgozok millioi haszn kb ket evtizede. standard lib reven fel tudjuk haszn az expertek tudasat akik megirtak, es mindazok tapasztalatat akik hasznaltak
+
+Java 7 ota a legtobb esetre az ajanlott rnd nr generator Random helyett a ThreadLocalRandom. quality++ es gyors, szerzo gepen 3.6x gyorsabb mint Random. fork join poolokhoz es parallel streamekhez haszn SplittableRandom
+
+libek hasznalatanak masik elonye h nem kell idot toltenunk ad hoc megoldasok irasaval olyan problemakra amik csak marginalisan erintik azt amin eppen dolgozunk. az app fejlesztesere fokuszalhatunk, nem az underlying reszletekre
+
+standard libek harmadik elonye h perfjuk az idovel alt javul, anelkul h nekunk erre effortot kellene ford. mivel sokan haszn oket, es industry-standard benchmarkokban is haszn, a libeket fejl orgoknak erdekuk h minel gyorsabbak legyenek. szamos Java platform libet atirtak az evek soran, gyakran tobbszor is, jelentos perf++
+
+negyedik elony, h idovel a fukcionalitasuk is nohet. ha egy libbol hianyzik vmi, azt a dev community jelezheti, es egy kov releaseben hozza lehet adni
+
+vegul a standard libek haszn elonye, h a mi kodunk is mainstream lesz. az ilyen kod konnyebben olvashato, maintainelheto es reusable
+
+ezeket az elonyoket nezve logikusnak tunik h libeket haszn es ne ad hoc implkat, de szamos prgozo megsem teszi. miert? lehet h nem tudjak h ezek a lib featureok leteznek. minden major releaseben szamos uj featuret adnak hozza, es ezekkel nem egyszeru lepest tartani. Java platform minden major releasenel egy web pagen publikaljak az uj featureoket, ezeket erdemes elolvasni. pl. tfh olyan prgot akarunk irni ami a command lineon megadott URL tartalmat irja ki (~linux curl). Java 9 elott ez egy kicsit korulmenyes volt, de a hozzaaddott InputStream transferTo() metodussal egyszerubb
+try(InputStream in = new URL(args[0]).openStream()) { in.transferTo(System.out);
+
+libek tul nagyok ahhoz h minden docot elolvassunk, de minden prgozonak ismernie kell a java.lang, java.util, java.io es subpackageik alapjaival. egyeb libekkel kapcs ismeretek as-needed alapon sajatithatoak el. item lehetosegein tulmutat a libek summarizalasa amelyek az evek soran oriasira nottek
+
+szamos lib erdemel emlitest. coll fwt es streams libet (item 45-48) minden prgozonak ismernie kell, csakugy mint a java.util.concurrent-ben levo conc utilokat. ez a package tart high-level utilokat a multithreaded prg leegyszerusitesere, es low-level primitiveket amelyekkel sajat high-level conc abstractionok irhatoak. java.util.concurrent high-level reszeit ld. item 80 es 81
+
+neha van h egy lib nem nyujtja azt amit szeretnenk. minel specebb a feladat, annak valoszinubb. ha Java platform libek nem nyujtjak, akkor high-qual 3rd party libekben erdemes nezelodni, pl. Guava. ha sehol nem talaljuk, akkor kenytelenek leszunk sajat magunk impl
+
+summary: ne talaljuk fel ujra a kereket. ha vmi olyasmit kell csinalnunk ami commonnak tunik, akkor lehet h a libekben van mar ilyen facility. alt a lib code jobb mint amit mi irnank, es az idovel meg javulni is fog. ez nem a mi prgozoi kepessegeink leminositese, egyszeruen valoszinu h a lib code kialakitasat alaposabb munka elozte meg mint ami a legtobb prgozo szamara idoben lehetseges
