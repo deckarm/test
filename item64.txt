@@ -1,0 +1,24 @@
+ITEM 64: REFER TO OBJECTS BY THEIR INTERFACES
+
+item 51 azt mondja h ifaceket es nem classokat kell haszn param typekent. altalanosabban, ifaceket es nem classokat kell haszn obj refkent. ha letezik megfelelo iface type, akkor a paramokat, return valuekat, varokat es fieldeket mind iface typeokkal kell dekl. az egyetlen amikor egy obj classara kell hiv, amikor konstrral krealjuk. pl. LinkedHashSet a Set iface egy implja. szokjunk hozza a kovhoz
+Set<Son> sonSet = new LinkedHashSet<>();
+ezt edig ne csinaljuk
+LinkedHashSet<Son> sonSet = new LinkedHashSet<>();
+
+ha hozzaszokunk ahhoz h ifaceket haszn typekent, a prg flex++ lesz. ha ugy dontunk, h ki akarjuk cserelni az implt, akkor az egyetlen dolog amit valt kell, a class neve a konstrban (vagy haszn egy masik static factoryt). pl. a fenti elso deklt megvalt
+Set<Son> sonSet = new HashSet<>();
+es minden ezt haszn kod tovabbra is muk; nem tudtak semmit a regi impl typerol, ezert a valtozast sem veszik eszre
+
+caveat: ha az orig impl vmi olyan spec funct nyujtott, ami az iface general contractjaban nem szerepel, es az ot haszn kod fuggott ettol a functol, akkor kritikus h az uj impl is nyujtsa uazt a funct. pl. ha az elso deklt haszn kod fuggot a LinkedHashSet ordering policyjatol, akkor nem szabad HashSetre cserelni a deklban, mert a HashSet nem nyujt garanciat az iteration orderre nezve
+
+miert akarnank kicserelni az impl typeot? pl. mert az uj impl jobb perft nyujt mint az orig v mert nyujt vmi olyan funct amit az orig nem. pl. tfh egy field egy HashMap instanceot tart. ha ezt EnumMapre csereljuk, az jobb perft es a keyek natural orderjevel konz iteration ordert fog nyujtani, de csakkor tudunk EnumMapet haszn ha a key type egy enum type. ha HashMapet LinkedHashMapre csereljuk, az predictable iter ordert fog nyujtani, a HadhMapehez hasonlo perf mellett, es nem lesz spec elvaras a keyekre nezve
+
+azt gondolnank h rendben van ha egy vart az impl typejaval dekl, mert a dekl typeot es az impl typeot egyidoben meg tudjuk valt, de nincs garancia h ez utan a valt utan a prg le fog fordulni. ha a client kod olyan metodusokat haszn az orig impl typeon amelyek az uj impl tybenban nincsenek benne, v ha a client kod atadta az instanceot egy olyan metodusnak amely az orig impl typeot varja, akkor a kod a tovabbiakban nem fog lefordulni. ha az iface typeal dekl a vart, az "keeps you honest"
+
+ha nem letezik megfelelo iface, akkor teljesen elfogadhato objra classal refelni. pl. value classok, mint String v BigInteger; az ilyeneket ritkan irjak ugy h tobbfele implt szeretnenek. gyakran finalok es ritkan van hozzajuk iface. az ilyen value classokat teljesen megfelelo paramkent, varkent, fieldkent v return typekent haszn
+
+masik eset ha nincs megfelelo iface type, amikor az obj egy olyan fwhoz tart, amelynek a fundamental typejai classok es nem ifacek. ha egy obj egy ilyen class-based fwhoz tart, akkor jobb a relevant base classal refelni, ami gyakran abstract, mint az impl classaval. ilyen szamos java.io class, mint pl. az OutputStream
+
+meg egy eset, amikor nincs megfelelo iface type, ha a class impl egy ifacet, de emellett nyujt olyan metodusokat is amelyek nincsenek benne az ifaceben; pl. PriorityQueue classban van egy comparator() metodus ami nincs benne a Queue ifaceben. az ilyen classokat csakkor haszn az instanceokra refkent, ha a prg tenylegesen haszn az extra metodusokat, es ez eleg ritka
+
+ez a harom felsorolt eset nem exhaustive, csak megmutatja h van olyan amikor elfogadhato ha objra a classaval refelunk. gyakban nyilvanvalonak kell lennie h egy adott objnak van-e megfelelo iface. ha van, akkor a prgunk flexebb es stilusosabb lesz ha az ifacet haszn az objra refkent. ha nincs megfelelo iface, akkor haszn a legkevesbe specific classt a class hierbol, ami nyujtja a kivant funct

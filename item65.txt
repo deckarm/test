@@ -1,0 +1,29 @@
+ITEM 65: PREFER INTERFACES TO REFLECTION
+
+a core reflection facility, java.lang.reflect, programmatic accesst nyujt classokhoz. egy Class objra obtainelhetunk Constructor, Method es Field instanceokat, amelyek a Class instance altal repr class konstrjait, metodusait es fieldjeit repr. ezek a classok programmatic accesst nyujtanak a class member nevekhez, field typeokhoz, metodus signatureokhez stb
+
+ezenkivul a Constructor, Method es Field instanceokkal reflectiven tudjuk manipulalni az underlying megfeleloiket: underlying class instanceokat tudunk krealni, metodusait invokolni es a fieldjeit accessalni a Constructor, Method es Field instanceokon valo metodus invokolassal. pl. Method.invoke() segitsegevel bmely class bmely objn bmely metodust tudjuk invokolni (security constraintektol fuggoen).  refl segitsegevel egyik class tudja haszn a masikat akkor is ha az utobbi meg nem is letezett amikor az elsot leforditottak
+ezeknek a lehetosegeknek viszont megvannak a ktgei
+- elvesztjuk a compile-time csekkeles nyujtotta benefiteket, beleertve az exc csekkelest is. ha egy prg egy nonexistent v inaccessible metodust probal refl invokolni, az runtime failure lesz, hacsak nem tettunk spec ovintezkedeseket
+- a refl accesst vegrehajto kod clumsy es verbose. nehez megirni es olvasni
+- perf--. refl metodus invocation sokkal lassabb mint normal metodus invocation. szamszeruleg nehez megmondani mennyivel, mert sok tenyezotol fugg. szerzo gepen egy param nelkuli, intet returnolo metodus refl invokolasa 11x volt lassabb
+
+vannak bizonyok alkalmazasok ahol refl szukseges. pl. code ana toolok es DI fwk. de meg ezek is kezdik mellozni a reflt az utobbi idoben, a hatranyok miatt. ha ketelyeink vannak h a prgunknak szuksege van-e reflra, akkor valszeg nincsen
+
+refl szamos benefitjehez hozzajuthatunk, a ktgeibol pedig keveset kell megfizetnunk ha limitaltan haszn. sok prgnal, amelynek vmi olyan classt kell haszn ami compile timeban meg nem available, letezik compile timeban vmi olyan iface v superclass amellyel lehet ref arra a classra (item 64). ebben az esetben refl krealhatunk instanceokat, es normal modon accessalhatjuk oket az ifaceukkel v superclassukkal
+
+pl. prg amely Set<String> instanceot kreal, amelynek classat az elso cl arg adja meg. a tobbi cl argot a prg beinserteli a setbe es kiprinteli. az elso argtol fgtl a prg kiprinteli a tobbi argot, duplikatokat kiszurve. az argok kiprintelesenek orderje viszont fugg az elso argban megadott classtol. ha java.util.HashSet akkor rnd order; ha java.util.TreeSet akkor alphabet order mert a TreeSetben levo elementek sorted
+Class<? extends Set<String>> cl = null; try { cl = (Class<? extends Set<String>>) Class.forName(args[0]); } catch(ClassNotFoundException e) { //class not found  } //a cast unchecked!
+Constructor<? extends Set<String>> cons = null; try { cons = cl.getDeclaredConstructor(); } catch(NoSuchMethodException e) { //nincs param nelkuli konstr }
+Set<String> s = null; try { s = cons.newInstance(); } catch(IllegalAccessException e) { //constr nem accessible } catch(InstantiationException e) { //class nem instantiable } catch(InvocationTargetException e) { //konstr exct dobott } catch(ClassCastException e) { //class nem impl Setet }
+s.addAll(Arrays.asList(args).subList(1,args.length); sout(s);
+
+ez csak egy jatekprg, de latszik h a techn powerful. konnyen atalakithato lenne pl. egy generic set testerbe, ami validalja a megadott Set implt ugy h agresszivan manipulalni probal egy v tobb instanceot, es csekkeli h telj-e a Set contractot. hasonloan lehetne belole generic set perf ana toolt csinalni. valojaban ez a techn lehetove tenne egy full service provider fw kialakitasat is (item 1). alt ez a tech minden amire a reflbol szuksegunk van
+
+latszik a refl ket hatranya is. egyreszt a pelda 6 klf runtime exct tud generalni, amelyek mindegyike compile-time error lett volna, ha nem haszn refl instantiationt. masreszt ez 25 sornyi kod arra h megkrealjunk egy class instanceot a neve alapjan, mig egy konstr invocation egy sor lenne. a prg hossza csokkentheto ha a ReflectiveOperationExceptiont catcheljuk, ami a refl exck egy superclassa (Java 7). mindket hatrany a prg azon reszere von, amely instantialja az objt. ha egyszer instantialva lett, a set a tovabbiakban megkulonboztethetetlen bmely mas Set instancetol. egy valodi prgban a kod nagy reszet ez a limited refl hasznalat nem befolyasolja
+
+ha leforditjuk a prgt akkor unchecked cast warningot kapunk. ez legitimate, a castolas Class<? extends Set<String>>-re sikerulni fog, akkor is ha a megadott class nem egy Set impl; ebben az esetben a prg ClassCastExceptiont fog dobni amikor instantialja a classt. warning suppressalasrol ld. item 27
+
+refl egy legitimate, de ritka haszn, amikor egy class depjeit manageljuk mas classokra, metodusokra v fieldekre amelyek runtimeban hianyozhatnak. ez hasznos lehet ha olyan packaget irunk, ami vmely masik package tobbfel verziojaval is egyutt futhat. a technika az h leforditjuk a packageunket a szukseges minimal required envre, tip a legregebbi verziora, az ujabb classokat v metodusokat pedig refl accessaljuk. ahhoz h ez mukodjon, megfeleloen kell reagalnunk, ha az accessalni kivant class v metodus runtimeban nem letezik; ez jelentheti azt h vmilyen mas modon probaljuk elerni uazt a funct v csokkentett funccal mukodunk
+
+summary: refl egy powerful facility, amit bizonyos sys prgzasi taskokhoz jol lehet haszn, de szamos hatranya van. ha olyan prgt irunk, amelynek olyan classokkal kell dolgoznia, amelyek compile timeban nem ismertek, akkor, amennyiben ez lehetseges, haszn reflt az objk instantialasara es accessaljuk az objkat vmi olyan ifacet v superclasst haszn, ami compile timeban ismert

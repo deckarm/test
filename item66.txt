@@ -1,0 +1,14 @@
+ITEM 66: USE NATIVE METHODS JUDICIOUSLY
+
+Java Native Interface (JNI) lehetove teszi h Java prgk native metodusokat hivjanak; ezek nativ prgozasi nyelveken irt metodusok, mint C, C++. tortenelmileg a native metodusoknak harom haszn esete van. accesst nyujtanak platform-spec facilitykhez, mint pl. registryk. accesst nyujtanak native kodu existing libekhez, pl. legacy libek amelyek legacy datat haszn. vegul native metodusokat irhatnak appok perf-krit reszeire
+
+native metodusokat legitimate haszn platform-spec facilityk accessalasara, de ritkan szukseges, mert ahogy a Java platform evolvalodott, egyre tobb olyan featurehoz nyujtott accesst amelyek korabban csak a host platformban voltak megtalalhatoak. pl. a Java 9 process API, accesst nyujt OS processekhez. szinten legitimate native metodusokat haszn native libek accessalasara, ha a Javaban nem letezik ezzel ekv lib
+
+ritkan javasolt native metodusokat haszn perf++ celjabol. Java 3 elotti korai releasekben ez gyakran szukseges volt, de a JVMek azota jelentosen felgyorsultak. a legtobb taskra ma mar lehetseges Javaban is kozel azonos perft elerni. pl. amikor java.math bekerult 1.1-be, a BigInteger egy C-ben irt multiprecision aritm liben relyolt. Java 3-ban a BigIntegert ujraimpltak Javaban, es addig hangoltak amig gyorsabb lett mint az orig native impl
+
+a tortenethez hozzatart h BigInteger azota nem sokat valtozott, kiveve h nagy szamokra felgyorsitottak a szorzast Java 8-ban. ekozben a native libek fejlesztese viszont rohamosan zajlott, pl. GNU Multiple Precision aritm lib (GMP). emiatt a Java prgozok ujra egyre surubben haszn GMP-t native metodusokkal ha perf-krit multiprecision aritm szukseges
+
+native metodus haszn komoly hatranyai vannak. mivel a native nyelvek nem safek (item 50), a native metodusokat haszn appok nem immunisak mem corruption errorokra. mivel a native nyelvek platform-dependentebbek mint a Java, native metodusokat haszn prgk kevesbe portablek. es nehezebben debuggolhatoak is. ha nem vagyunk ovatosak, native metodusok perf-- is lehetnek mert a GC nem tudja automatizalni, de meg trackelni se a native mem usaget (item 8), a native kodba belepes/kilepesnek pedig ktge van. vegul a native metodusok "glue" kodot igenyelnek amit korulmenyes megirni es nehez olvasni
+
+summary: gondoljuk meg mielott native metodusokat haszn. ritka h perf++ van ra szukseg. ha low-level rsck v native libek accessalasahoz kell native metodusokat haszn, akkor haszn olyan keves native kodot amennyire lehetseges, es teszteljuk alaposan. egyetlen bug a native kodban corruptalhatja a teljes appot
+
