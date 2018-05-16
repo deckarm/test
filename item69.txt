@@ -1,0 +1,30 @@
+ITEM 69: USE EXCEPTIONS ONLY FOR EXCEPTIONAL CONDITIONS
+
+neha belefuthatunk ilyen kodba
+try { int i = 0; while(true) range[i++].climb(); } catch(ArrayIndexOutOfBoundsException e) {}
+mit csinal ez? ranezesre nem nyilvanvalo, es mint ilyen, ez eleg ahhoz h ne csinaljunk ilyet (item 67). ez egy teljesen rossz idiom egy array elementjein valo vegigloopolasra. a vegtelen loop egy ArrayIndexOutOfBoundsException throwolasaval, catchelesevel es ignoralasaval terminal, amikor accessalni probalja az elso array elementet az array boundokon kivul. ez ekv az array loopolas standard idiomjaval, amelyet jol ismerunk
+for(Mountain m: range) m.climb();
+
+akkor miert akarna barki is exc-based loopot haszn? ez egy rossz perf++ kiserlet, ami azon a teves reasoningon alapul h mivel a VM minden array access boundjait csekkeli, a normal loop termination csekkeles - amit a compiler elrejt, de ott van a for-each loopban - redundans es elkerulendo. ezzel harom problema van
+- mivel az exck kiveteles esetekre vannak designolva, JVM implementorok szamara nem volt ok h olyan gyorsra csinaljak oket mint az explicit csekkeleseket
+- try-catch blokkba rakott kod megakadalyoz bizonyos optimizalasokat amiket a JVM implk egyebkent vegrehajtananak
+- arrayen loopolas standard idiomja nem szuksegszeruen eredmenyez redundans csekkeket; szamos JVM impl kiopt ezeket
+
+valojaban az exc-based idiom lenyegesen lassabb mint a standard. szerzo gepen 100 elementre kb 2x lassabb
+
+exc-based loop nem csak obfusc a kodot es perf--, de nem is garantalt h muk. ha a loopban bug van, az h exct haszn flow controlra, elmaszkolhatja a bugot, es nehezitheti a debuggolast. tfh a loop bodyban egy olyan metodus van invokolva, ami vmi unrelated arrayen hajt vegre outbound accesst. ha rendes loop idiomot haszn, akkor ez a bug egy uncaught exct general, ami azonnal thread terminalast okoz, full stact tracet nyujtva. ha az exc-based loopot haszn, akkor a bug okozta exc el lesz kapva, es tevesen normal loop terminationnek lesz tekintve
+
+tanulsag: exck, ahogy a nevuk is mutatja, kiveteles esetekre haszn; normal control flowra ne haszn. altalanosabban, haszn standard, konnyen attekintheto idiomokat mindenfele tulokos techn helyett, amiktol perf++ remelunk. meg ha van is perf jav, nem biztos h meg is marad ahogy a platform implk fejlodnek. a rejtett bugok, es maint problemak viszont biztosan megmaradnak
+
+ennek az elvnek vannak kov API designra is. joldesignolt API nem forcolhatja a clientjeit h exckat hasznaljanak normal control flowra. egy classban, amelyben van olyan "state-dep" metodus, amely csak bizonyos unpred conditionok mellett invokolhato, alt kell legyen egy kulon "state-testing" metodus, ami azt jelzi h a state-dep metodus invokolhato-e. pl. az Iterator ifaceben state-dep metodus a next(), a kapcs state-testing metodus pedig a hasNext(). ez lehetove teszi h standard idiom szerint normal for looppal iteraljunk collal (for-each loopnal a hasNext() internally van haszn)
+for(Iterator<Foo> i = collection.iterator(); i.hasNext(); ) Foo foo = i.next();
+
+ha Iteratorban nem lenne hasNext() akkor a clienteknek ezt kellene csinalniuk
+try { Iterator<Foo> i = collection.iterator(); while(true) { Foo foo = i.next(); ...} } catch(NoSuchElementException e) {}
+ez nagyon hasonlo az item elejen levo rossz array iter peldahoz. verbose es felrevezeto, vmint valszeg rossz perf, es elmaszkolhat bugokat a sys unrelated reszeiben
+
+kulon state-testing metodus alternativaja lehet ha a state-dep metodus egy empty optionalt returnol (item 55) v vmi spec valuet, mint null, ha nem tudja a kivant szamitast vegrehajtani
+
+guidelineok a state-testing metodus es az optional/spec return value kozti valasztashoz. ha egy objt conc akarunk accessalni ext sync nelkul, v "is subject to externally induced state transitions" akkor optional/spec return value, mert az obj stateje megvaltozhat a state-testing metodus invokolasa es a state-dep metodus invokolasa kozt. perf okok szolhatnak optional/spec return value mellett ha a state-testing metodus lenyegeben duplikalna a state-dep metodus munkajat. ceteris paribus, state-testing metodus kicsit pref a spec return valuehoz kepest. kicsit jobban olvashato, es helytelen haszn konnyebben detektalhato: ha elfelejtunk meghivni egy state-testing metodust, a stet-dep exct fog dobni; ha elfelejtunk csekkelni egy spec return valuet akkor a bug rejtve maradhat. optional return valueknal ez nem issue
+
+summary: exck a kiveteles esetekre szolnak. ne haszn oket normal control flowra es ne irjunk olyan APIkat amik ezt forcoljak

@@ -1,0 +1,23 @@
+ITEM 70: USE CHECKED EXCEPTIONS FOR RECOVERABLE CONDITIONS AND RUNTIME EXCEPTIONS FOR PROGRAMMING ERRORS
+
+Java haromfele throwablet nyujt: checked exck, runtime exck es errorok. prgozok kozott van nemi zavar h melyiket mikor kell haszn. a dontes nem mindig egyertelmu, de van par general rule ami guidancet nyujt
+
+foszabaly a checked es unchecked exck kozti dontesre: haszn checked exct olyan conditionokra amelyekbol a hivo fel varhatoan recoverelni tud. ha checked exct dobunk, azzal forcoljuk a hivot h catchelje azt v propagalja tovabb. ezert minden checked exc, amit egy metodus throws deklja szerint dobhat, egy jelzes az API user szamara h a kapcs condition a metodus invokolasanak egy lehetseges kimenete
+
+azzal h szembesiti a usert egy checked excal, az API designer lenyegeben kotelezove teszi h a conditionbol recoverelni kell. a user ezt figyelmen kivul hagyhatja, ha catcheli es ignoralja az exct, de ez alt rossz otlet (item 77)
+
+unchecked throwablek ket fajtaja: runtime exck es errorok. behavjuk azonos: mindketto olyan throwable amit nem kell es alt nem szabad catchelni. ha egy prg unchecked exct v errort dob, a recovery alt nem lehetseges, es ha folytatnank a futast azzal tobb kart okoznank mint hasznot. ha egy prg nem catchel egy ilyen throwablet, akkor a current thread a megfelelo error msgel meg fog allni
+
+haszn runtime exct prgozasi hibak jelzesere. runtime exck nagy tobbsege precond violalast jelez. precond vio akkor van amikor egy API clientje nem tartja be az API spec altal eloirt contractot. pl. array access contractja spec, h az array indexnek 0 es array length - 1 kozott kell lennie, inclusive. ArrayIndexOutOfBoundsException azt jelzi h ezt a precondot violaltak
+
+egy problema ezzel a tanaccsal h nem mindig tiszta h recoverable conditionnal van-e dolgunk v prgozasi hibaval. pl. rsc exhaustiont okozhatja prgozasi hiba is, ha pl. tul nagy arrayt allocolunk, v tenyleges rsc shortage is. ha temporary shortagerol v megnovekedett demandrol van szo akkor a condition jo esellyel lehet recoverable. az API designer dontese kell legyen h egy "given instance of resource exhaustion" velhetoen lehetove teszi-e a recoveryt. ha azt gondoljuk h igen, akkor haszn checked exct; ha nem, akkor runtime exct. ha nem tiszta h a recovery lehetseges-e, akkor inkabb haszn unchecked exct, ld item 71
+
+bar JLS szerint nem kovetelmeny, eros konv h az errorokat a JVm arra tartja fenn h olyan rsc deficiencyket, invar failureket v egyeb conditionokat jelezzen, amelyek lehetetlenne teszik a tovabbi futast. mivel ezt a konvt szinte univerzalisan betartjak, legjobb ha nem impl uj Error subclassokat. ezert minden altalunk impl unchecked throwable a RuntimeException subclassa legyen. errorokat ne csak ne def, de AssertionError kivetelevel ne is dobjunk
+
+lehet olyan throwablet def ami nem subclassa Exceptionnek, RuntimeExceptionnek v Errornak. a JLS az ilyen throwablekkel kzvtl nem fogl, de implicite spec h ezek ugy viselkednek mint a normal checked exck (amelyek subclassai Exceptionnek de nem a RuntimeExceptionnek). mikor kell ilyet haszn? soha. nincs benefitjuk a normal checked exckkel szemben, es csak osszezavarjak az API useret
+
+API designerek gyakran elfelejtik h az exck teljeserteku objk, amelyeken tetszoleges metodusokat lehet def. az ilyen metodusok elsodleges celja "to provide code that catches the exception with additional information concerning the condition that caused the exception to be thrown". ha nincsenek ilyen metodusok, akkor a prgozok pl. kiparsoljak az exc string reprjat h kinyerjek a szukseges infot. ez nagyon rossz practice (item 12). throwable classok ritkan spec a string reprjuk reszleteit, emiatt ezek a string reprk implkent es releasenkent kul lehetnek. ezert a exc string reprjat kiparsolo kod valszeg nonportable es fragile lesz
+
+mivel a checked exck alt recoverable conditionokat jeleznek, kulonosen fontos h olyan metodusokat nyujtsanak, amelyek infot nyujtanak a hivonak az exc conditionbol valo recovereleshez. pl. tfh checked exct dobunk, amikor egy kartyas vasarlas fedezethiany miatt failel. az excnek nyujtania kell egy accessor metodust amivel le lehet queryzni a hianyzo osszeget. igy a hivo kommunikalni tudja az osszeget a vasarlo fele. ld. meg item 75
+
+summary: dobjunk checked exckat recoverable conditionokra es unchecked exckat prgozasi hibakra. ketely eseten dobjunk unchecked exct. ne def olyan throwablet ami se nem checked exc, se nem runtime exc. checked exckhez nyujtsunk metodusokat amelyek segitenek a recoveryben
