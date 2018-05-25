@@ -1,0 +1,24 @@
+ITEM 73: THROW EXCEPTIONS APPROPRIATE TO THE ABSTRACTION
+
+zavaro amikor egy metodus olyan exct dob, amelynek ugy tunik h nincs kapcs a vegrehajtott taskkal. ez gyakran tortenik ha egy metodus egy lower-level abstraction altal dobott exct propagal tovabb. nem csak zavaro, de pollutallja is a higher layer APIjat impl detailekkel. ha a higher layer implja egy kesobbi releaseben megvalt, akkor megvaltoznak az exck is amiket dob, ami eltorheti az existing client prgkat
+
+ezt a problemat elkerulendo, higher layereknek el kell kapni a lower-level exckat es helyettuk olyan exct dobni tovabb, amelyek a higher-level abstractionnak megfelelnek. ez az idiom az un. exc translation
+try { //lower-level abstractiont haszn } catch(LowerLevelException e) { throw new HigherLevelException(...); }
+
+az alabbi exc translation pelda az AbstractSequentialList classbol van, ami a List iface egy skeletal implja (item 20). itt az exc translationt a List<E> iface get() metodusanak specje mandatalja
+public E get(int index) { ... try { return i.next(); } catch(NoSuchElementException e) { throw new IndexOutOfBoundsException("Index: " + index); }
+
+exc translation spec formaja az exc chaining, ezt akkor haszn, amikor a lower-level exc is hasznos lehet a higher-level exct okozo problemat debuggolo illeto szamara. a lower-level exct (cause) atadodik a higher-level excnek, ami nyujt egy accessor metodust (Throwable.getCause()) a lower-level exc retrievelesere
+try { //lower-level abstractiont haszn} catch(LowerLevelException cause) { throw new HigherLevelException(cause); }
+
+a higher-level exc konstr atadja a causet egy chaining-aware superclass konstrnak, es vegeredmenyben a Throwable vmelyik chaining-aware konstranak fog atadodni, mint pl. Throwable(Throwable)
+class HigherLevelException extends Exception { 
+  HigherLevelException(Throwable cause) { super(cause);
+  
+legtobb standard excnak van chaining-aware konstra. azoknal az excknal, amelyeknek nincs, be tudjuk settelni a causet a Throwable initCause() metodusaval. az exc chaining nemcsak lehetove teszi a cause accessalasat prgbol, de integralja is a cause stacktracet a higher-level exc stacktracebe
+
+exc translation jobb mint az exck agyatlan propagalasa a lower layerekbol, de nem szabad overusolni. ahol lehetseges, a lower layerekbol erkezo exck legjobb kezelese, ha elkeruljuk oket, ugy h biztositjuk h a lower-level metodusok sikeruljenek. neha ezt megtehetjuk ugy ha csekkeljuk a higher-level metodus paramok validityjet mielott atadjuk oket a lower layereknek
+
+ha nem lehetseges a lower layerekbol erkezo exck preventalasa, akkor egy lehetseges mo ha a higher layer a hatterben kikeruli ezeket az exckat, elszigetelve a higher-level metodus hivojat a lower-level problemaktol. ilyenkor cleszeru lehet az exc loggolasa vmilyen logging facilityvel, mint java.util.logging. ez lehetove teszi h a prgozok vizsgalni tudjak a problemat, mikozben a client kod es a user nem latjak
+
+summary: ha nem tudjuk preventalni v kezelni a lower layerekbol erkezo exckat, akkor haszn exc translationt, hacsak a lower-level metodus nem garantalja azt h minden excja appropriate a higher levelen is. chaining mindket "vilag" elonyeit kihaszn: lehetove teszi h megfelelo higher-level exct dobjunk, mikozben capturoljuk az underlying causet failure ana celjabol (item 75)

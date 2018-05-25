@@ -1,0 +1,19 @@
+ITEM 76: STRIVE FOR FAILURE ATOMICITY
+
+miutan egy obj exct dobott, alt elvart h az obj tovabbra is joldef, usable stateben legyen, meg akkor is ha a failure egy oper perform kozepen tortent. ez fokent igaz checked exckra, amelyekbol a hivonak recoverelnie kellene. alt megfogalmazva, egy failed metodus invocationnek abban a stateben kell hagynia az objt, amelyben az invocation elott volt. az ezzel a tulajdonsaggal rendelkezo metodus un failure-atomic
+
+szamos mod van ennek eleresere. legegyszerubb ha immut objkat designolunk (item 17). ha egy obj immut, akkor a failure atomicity ingyen van. ha egy oper failel, az preventalhatja azt h egy uj obj krealodjon, de sosem fog egy existing objt inkonz stateben hagyni, mert minden obj stateje konz amikor megkrealodik, es azutan nem is modifolodhat
+
+mut objkon operalo metodusoknal a leggyakoribb mod a failure atomicity eleresere ha csekkeljuk a paramok validityjet az oper vegrehajtasa elott (item 49). ez azt okozza h a legtobb exc el fog dobodni mielott az obj modif megkezdodne. pl. item 7-ben latott Stack.pop() metodus elso sora if (size == 0) throw new EmptyStackException(); ha ez nem lenne, akkor a metodus tovabbra is exct dobna amennyiben empty stackbol probalnank elementet popolni (elements[--size]-nal), de ez a size fieldet inkonz, neg stateben hagyna, es ezaltal az objn torteno kesobbi metodus invocationok failelnenek. tovabba ekkor ArrayIndexOutOfBoundsException dobodna, ami nem appropriate a pop() metodus abstractionjevel (item 73)
+
+egy hasonlo approach a failure atomicity eleresere a szamitas rendezese h bmely olyan resz ami failelhet, azok elott a reszek elott legyen amelyek modifoljak az objt. ez az elozo approach natural extensionje, amikor az argok nem csekkelhetoek a szamitas egy reszenek vegrehajtasa nelkul. pl. TreeMap, amelynek elementjei vmilyen ordering szerint sortedek. ahhoz h TreeMaphez hozza tudjunk adni egy elementet, az element typejanak olyannak kell lennie, ami a TreeMap orderingje szerint comparalhato. ha egy nem megfelelo typeju elementet probalunk hozzaadni, az termeszetesen failelni fog ClassCastExceptionnel amikor a treeben searcheljuk az elementet, meg mielott a tree modifolodna
+
+harmadik approach a failure atomicity eleresere ha az opert az obj egy temp copyjan hajtjuk vegre, es az oper vegen replaceljuk az obj contentjet a temp copyeval . ez az approach jo ha a szamitas a temp data structban gyorsabban vegrehajthato. pl. egyes sorting functionok az input listjuket egy arraybe copyzzak a sortolas elott, h csokk az element access ktget a sort inner loopjaban. ez perf miatt van, de jarulekos benefitje h az input list erintetlen marad ha a sort failel
+
+meg egy, kevesbe gyakori approach a failure atomicity eleresere ha recovery kodot irunk, amely interceptal egy oper kozepen torteno failuret, es rollbackeli az obj statejet az oper megkezdese elotti pontba. ezt az approacht foleg durable (disk-based) data structokra haszn
+
+failure atomicity alt kivanatos, de nem mindig elerheto. pl. ha ket thread conc probalja modifolni uazt az objt megfelelo sync nelkul, az obj inkonz stateben maradhat. ezert helytelen azt felt h az obj egy ConcurrentModificationException catchelese utan is hasznalhato. az errorok nem recoverelhetoek, ezert nem is erdemes megprobalni failure atomicityt preservalni AssertionError dobaskor
+
+lehet h failure atomicity vhol lehetseges de nem kivanatos. egyes opereknel jelentosen novelheti a ktget v complexityt. ezzel egyutt gyakran "ingyenes" es konnyu elerni a failure atomicityt "once you’re aware of the issue"
+
+summary: szabalykent, bmely generalt exc amely resze a metodus specjenek, uabban a stateben kell hagyja az objt amelyben a metodus invocation elott volt. ahol ezt a szabalyt nem tartjuk be, az API docnak egyert jeleznie kell h milyen stateben lesz az obj. sajnos szamos existing API doc nem telj ezt az elvarast
