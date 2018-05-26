@@ -1,9 +1,0 @@
-ITEM 77: DON’T IGNORE EXCEPTIONS
-
-ez a tanacs nyilvanvalonak tunhet, de eleg soszor violaljak ahhoz h erdemes legyen leirni. ha egy API designerei ugy dekl egy metodust h az exct throwol, azzal mondani akarnak vmit; ezt ne ignoraljuk! konnyu az exckat ignoralni ugy h a metodus invocationt egy olyan try stmtel vesszuk korbe, amelynek a catch blockja ures
-ures catch block "defeats the purpose of exceptions" ami az h forcoljon bennunket az exceptional conditionok kezelesere. exc ignoralasa hasonlo ahhoz ha kikapcsoljuk a tuzriasztot, igy mas sem fogja eszrevenni ha tenyleg tuz van. ezt lehet h megusszuk, de lehet h katasztrofa lesz belole. ha ures catch blockot latunk, azonnal gyanakodjunk
-
-vannak esetek ahol appropriate exct ignoralni. pl. FileInputStream closolasa. nem valtoztattuk meg a file statejet, ezert nem szukseges recovery actiont vegrehajtani, es mar kiolvastuk a szukseges infot, ezert nem szukseges abortalnunk a folyamatban levo opert (?). az exc loggolasa jo dontes lehet, h meg tudjuk vizsgalni amennyiben az exck gyakran tortennek. ha ugy dontunk h ignoralunk egy exct, akkor a catch blockba tegyunk egy magyarazo commentet, a var neve pedig legyen ignored
-int numColors = 4; try { numColors = ... } catch(TimeoutException | ExecutionException ignored) { //use default: minimal coloring is desirable, not required }
-
-ez a tanacs checked es unchecked exckra egyforman von. fgtl h egy exc egy predictable exceptional conditiont v prgozasi hibat jelent, ures catch blockkal ignoralva egy olyan prg lesz az eredmeny, ami error ellenere tovabb fut. a prg aztan vmikor a jovoben elfailelhet, a kod egy olyan pontjan aminek a tenyleges problemaval nincs kapcs. exc megfelelo kezelesevel ez elkerulheto. ha pedig csak propagaljuk az exct kifele akkor a prg hiba eseten legalabb elfailel, es lesz vmi info a debuggolashoz
