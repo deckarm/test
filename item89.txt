@@ -1,0 +1,62 @@
+ITEM 89: FOR INSTANCE CONTROL, PREFER ENUM TYPES TO READRESOLVE
+
+item 3 leirja a singleton patternt es ad egy peldat singleton classra
+
+ahogy item 3 megjegyzi, ez a class a tovabbiakban nem lenne singleton ha a deklhoz hozzaadnank az implements Serializablet. nem erdekes h a class a default serialized formot v custom serialized formot haszn (item 87), se az h nyujt-e explicit readObject() metodust (item 88). bmilyen readObject() metodus, explicit v default, egy ujonnan krealt instanceot returnol, ami nem uaz az instance lesz ami a class init soran krealodott
+
+a readResolve() feature lehetove teszi h a readObject() altal krealt instanceot egy masikkal helyettesitsuk. ha egy deserializalando obj class definial egy megfeleloen dekl readResolve() metodust, akkor ez a metodus invokolodik az ujonnan krealt instanceon miutan az deserializalodott. aztan pedig a metodus altal returnolt obj ref lesz returnolve az ujonnan krealt obj helyett. a feature legtobb haszn soran az ujonnan krealt objra nem lesz ref retainelve, tehat azonnal GC eligible lesz
+
+ha az Elvis singleton class implmenets Serializable, akkor az alabbi readResolve() metodussal tudjuk garantalni a sigleton propertyt
+private Object readResolve() { return INSTANCE;
+ez a metodus ignoralja a deserializalt objt, es azt az Elvis instanceot returnoli ami a class init soran krealodott. ezert egy Elvis instance serialized formja ne tartalmazzon real datat; minden instance fieldet transientkent kell dekl. sot, ha instance control szempontjabol dependalunk a readResolve() metoduson, akkor vmennyi obj ref typeu instance fieldet transientkent kell dekl. egyebkent egy tamado refet szerezhet a deserializalt objra mielott a readResolve() metodusa lefutna, vmi hasonlo modon mint item 88 MutablePeriod tamadasnal
+
+a tamadas kicsit komplikalt de az underlying otlet egyszeru. ha egy singleton tart egy nontransient obj ref fieldet, akkor a field contentje deserializalva lesz mielott a singleton readResolve() metodusa lefut. igy egy jol megkonstrualt stream "lophat" egy refet az orig deserializalt singletonra mikor az obj ref field contentje deserializalodik
+
+reszletesebben. eloszor irjunk egy "stealer" classt aminek van egy readResolve() metodusa es egy instance fieldje amely a serialized singletonra refel, amelyben a stealer "elbujik". a serialization streamben, csereljuk ki a singleton nontransient fieldjet a stealer egy instanceara. igy circularity lesz: a singleton tart a stealert es a stealer refel a singletonra
+
+mivel a singleton tart a stealert, a stealer readResolve() metodusa fut le eloszor amikor a sigleton deserializalodik. eredmenykent, amikor a stealer readResolve() metodusa fut le, az instance fieldje tovabbra is a partially deserialized (es mint ilyen, unresolved) singletonra refel
+
+a stealer readResolve() metodusa atmasolja a refet az instance fieldjebol egy static fieldbe, igy a ref accessalhato lesz a readResolve() metodus lefutasa utan. a metodus ezutan returnol egy valuet annak a fieldnek a typejabol amelyben elbujt. ha ezt nem tenne akkor a VM ClassCastExceptiont dobna, amikor a serialization sys megprobalna storeolni a stealer refet a fieldjebe
+
+konkretizalva, nezzuk az alabbi broken singletont
+public class Elvis implements Serializable { 
+  public static final Elvis INSTANCE = new Elvis();
+  private Elvis() {}
+  private String[] favoriteSongs = { "Hound Dog", "Heartbreak Hotel" };
+  public void printFavorites() { sout(Arrays.toString(favoriteSongs));
+  private Object readResolve() { return INSTANCE;
+
+a fenti leirasnak megfelelo stealer class
+public class ElvisStealer implements Serializable {
+  static Elvis impersonator;
+  private Elvis payload;
+  private Object readResolve() {
+    impersonator = payload; //ref mentese az "unresolved" Elvis instancera
+	return new String[] { "A Fool Such as I" }; //favoritSongs fieldnek megfelelo typeu obj returnolese
+  }
+  private static final long serialVersionUID = 0;
+
+az alabbi prg egy kezzel kreal streamet deserializal h ket instanceot krealjon a flawed singletonbol. a deserialization metodus nincs kiirva mert uaz mint korabban
+public class ElvisImpersonator {
+  private static final byte[] serializedForm = { ... } //byte stream ami nem johet egy valodi Elvis instancebol
+  main() { //ElvisStealer.impersonatort initel es a valodi Elvis.INSTANCE-ot returnoli
+    Elvis elvis = (Elvis) deserialize(serializedForm);
+	Elvis impersonator = ElvisStealer.impersonator;
+	elvis.printFavorites();
+	impersonator.printFavorites();
+
+futtatasi eredmeny "[Hound Dog, Heartbreak Hotel]" es "[A Fool Such as I]" vagyis ket kulonbozo Elvis instanceot krealtunk
+
+problema fixalhato, ha a favoriteSongs fieldet transientkent dekl, de jobb mo ha az Elvis classt single-element enum typea tesszuk (item 3). ahogy a fenti tamadas demonstralta, readResolve() metodust haszn arra h egy "temporary" deserialized instanceot preventaljunk egy tamado accesstol, fragile es nagy ovatossagot igenyel
+
+ha a serializable instance-controlled classunkat enumkent irjuk meg, Java garantalja h nem lehet mas instance a dekl constantokon kivul, hacsak a tamado nem abusol vmi privileged metodust mint pl. AccessibleObject.setAccessible(). ha egy tamado ezt meg tudja tenni, annak mar van eleg privilege h arbitrary native kodot futtasson es "all bets are off"
+
+readResolve() hasznalata instance controlra nem obsolete. ha olyan serializable isntance-controlled classt kell irnunk, amelynek instanceai compile timeban nem ismertek, akkor nem fogjuk tudni a classt enum typekent repr
+
+a readResolve() accessibilityjenek jelentosege van. ha a readResolve() metodust egy final classba tesszuk akkor privatenak kell lennie. ha nonfinal classba tesszuk akkor meg kell fontolnunk az accessibilityjet. ha private akkor nem fog a subclassokra applyolni. ha package-private akkor csak az uabban a packageben levo subclassokra fog applyolni. ha protected v public akkor minden subclassra applyolni fog ami nem overridolja. ha egy readResolve() metodus protected v public es egy subclass nem overridolja, akkor egy subclass instance deserializalasa egy superclass instanceot fog eredmenyezni, ami valszeg ClassCastExceptiont fog okozni
+
+summary: haszn enum typeokat az instance control invariantok enforcolasara ahol lehetseges. ha nem leheteseges es olyan classra van szuksegunk ami serializable es instance-controlled is, akkor nyujtanunk kell egy readResolve() metodust es bizt h a class vmennyi instance fieldje v primitive v transient 
+	
+    
+   
+  
