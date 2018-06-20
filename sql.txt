@@ -1,0 +1,9 @@
+select * from dba_objects a where a.OBJECT_NAME='...' (nagybetu!)
+SELECT * FROM DBA_TAB_COLS A WHERE A.COLUMN_NAME LIKE '%...%'
+
+update mytable set STATUS = 'status' where ...
+SELECT TRANSLATE(message_body, CHR(00), CHR(120)) FROM mytable 
+select EXTRACTVALUE(xmltype(message_body), '/.../...') somealias from mytable 
+select * from mytable WHERE regexp_like (message_body,'...|...|...') 
+
+
